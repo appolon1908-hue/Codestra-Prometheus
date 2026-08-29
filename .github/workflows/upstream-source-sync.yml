@@ -1,0 +1,61 @@
+name: Codestra Upstream Source Sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - CODESTRA_UPSTREAM.json
+      - .github/workflows/upstream-source-sync.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codestra-upstream-source-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Codestra authority
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Import official upstream source snapshot
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t values < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('CODESTRA_UPSTREAM.json').read_text())
+          print(data['upstream_clone_url']); print(data['upstream_ref']); print(data['import_path'])
+          PY
+          )
+          UPSTREAM_URL="${values[0]}"; UPSTREAM_REF="${values[1]}"; IMPORT_PATH="${values[2]}"
+          [[ "$UPSTREAM_URL" == https://github.com/*.git ]] || exit 2
+          [[ "$IMPORT_PATH" == upstream ]] || exit 2
+          rm -rf .codestra-upstream-src "$IMPORT_PATH"
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch "$UPSTREAM_REF" "$UPSTREAM_URL" .codestra-upstream-src
+          UPSTREAM_SHA="$(git -C .codestra-upstream-src rev-parse HEAD)"
+          rm -rf .codestra-upstream-src/.git
+          mv .codestra-upstream-src "$IMPORT_PATH"
+          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          Path('CODESTRA_UPSTREAM_LOCK.json').write_text(json.dumps({'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':datetime.now(timezone.utc).isoformat(),'deployment_enabled':False}, indent=2)+'\n')
+          PY
+          git config user.name 'codestra-upstream-sync'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A upstream CODESTRA_UPSTREAM_LOCK.json
+          git diff --cached --quiet && exit 0
+          git commit -m "vendor: sync official upstream ${UPSTREAM_SHA}"
+          git push origin HEAD:main
+          git push origin HEAD:staging
+          git push origin HEAD:production
