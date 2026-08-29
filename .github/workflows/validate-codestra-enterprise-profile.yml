@@ -1,0 +1,15 @@
+name: Validate Codestra enterprise profile
+on:
+  pull_request:
+    paths: ['codestra/**', 'scripts/validate_codestra_enterprise_profile.py']
+  push:
+    branches: [main, staging, production]
+    paths: ['codestra/**', 'scripts/validate_codestra_enterprise_profile.py']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/validate_codestra_enterprise_profile.py
