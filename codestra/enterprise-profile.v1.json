@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "1.0",
+  "component": "prometheus",
+  "role": "metrics-and-alert-evaluation-authority",
+  "canonicalHostname": "prom.codestra.media",
+  "exposure": "internal_private",
+  "status": "SOURCE_PREPARED_NOT_DEPLOYED",
+  "businessScope": ["codestra", "moneybee", "beyvra", "breero", "larim-a", "transportation", "booked4seasons", "social", "klyrow", "telnexa", "kyqra", "restaurant", "provisioning"],
+  "platformScope": ["caddy", "kong", "keycloak", "middleware", "odoo", "n8n", "vicidial", "postgresql", "redis", "openbao", "alloy", "otel-collector"],
+  "requiredTargetLabels": ["codestra_business", "application", "service", "environment", "server", "region", "deployment"],
+  "forbiddenHighCardinalityLabels": ["tenant_id", "customer_id", "user_id", "request_id", "correlation_id", "trace_id", "email", "phone", "message_id", "order_id"],
+  "requiredMetricFamilies": [
+    "http_requests",
+    "http_duration",
+    "errors",
+    "dependency_latency",
+    "database_latency",
+    "queue_depth",
+    "worker_failures",
+    "outbox_backlog",
+    "inbox_backlog",
+    "webhook_delivery",
+    "webhook_retries",
+    "authentication_failures",
+    "authorization_denials",
+    "idempotency_conflicts",
+    "reconciliation_failures",
+    "provider_health",
+    "deployment_info"
+  ],
+  "exporters": ["node", "cadvisor", "postgres", "redis", "blackbox"],
+  "features": {
+    "recordingRules": true,
+    "businessRollups": true,
+    "sloEvaluation": true,
+    "cardinalityBudgets": true,
+    "alertmanagerIntegration": true,
+    "deploymentCorrelation": true,
+    "targetHealth": true,
+    "capacityForecastInputs": true
+  },
+  "financialTradingBoundary": {
+    "business": "beyvra",
+    "rule": "Metrics expose safe aggregate health, latency, error, reconciliation and capability state only; no secrets or customer-level financial state is stored as labels."
+  }
+}
