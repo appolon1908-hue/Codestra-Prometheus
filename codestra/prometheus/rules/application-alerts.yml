@@ -7,10 +7,13 @@ groups:
         labels:
           severity: critical
           owner: platform
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "{{ $labels.application }}/{{ $labels.service }} is not scrapeable"
           description: "Prometheus cannot scrape {{ $labels.instance }} on {{ $labels.server }} in {{ $labels.environment }}."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
       - alert: CodestraHighHttpErrorRatio
         expr: (codestra:http_error_ratio:5m > 0.05) and on (environment, server, application, service) (codestra:http_requests:rate5m > 0.2)
@@ -18,10 +21,13 @@ groups:
         labels:
           severity: critical
           owner: application
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "High 5xx ratio for {{ $labels.application }}/{{ $labels.service }}"
           description: "5xx ratio has exceeded 5% for ten minutes."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
       - alert: CodestraHighHttpLatency
         expr: codestra:http_duration_seconds:p95_5m > 2
@@ -29,10 +35,13 @@ groups:
         labels:
           severity: warning
           owner: application
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "High HTTP latency for {{ $labels.application }}/{{ $labels.service }}"
           description: "p95 HTTP duration has exceeded two seconds."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
       - alert: CodestraDependencyLatencyHigh
         expr: codestra:dependency_latency_seconds:p95_5m > 1
@@ -40,10 +49,13 @@ groups:
         labels:
           severity: warning
           owner: application
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "Dependency latency is high for {{ $labels.application }}/{{ $labels.service }}"
           description: "Dependency {{ $labels.dependency }} p95 latency is above one second."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
       - alert: CodestraDatabaseLatencyHigh
         expr: codestra:database_latency_seconds:p95_5m > 0.5
@@ -51,10 +63,13 @@ groups:
         labels:
           severity: warning
           owner: application
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "Database latency is high for {{ $labels.application }}/{{ $labels.service }}"
           description: "Database operation {{ $labels.operation }} p95 latency is above 500 ms."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
   - name: codestra-application-backlogs
     rules:
@@ -64,10 +79,13 @@ groups:
         labels:
           severity: warning
           owner: application
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "Queue {{ $labels.queue }} is backing up"
           description: "Queue depth is above 1000 for {{ $labels.application }}/{{ $labels.service }}."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
       - alert: CodestraWorkerFailures
         expr: codestra:worker_failures:rate5m > 0.05
@@ -75,10 +93,13 @@ groups:
         labels:
           severity: warning
           owner: application
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "Worker failures detected for {{ $labels.worker }}"
           description: "Worker failures exceed 0.05/s for five minutes."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
       - alert: CodestraOutboxBacklogHigh
         expr: (codestra:outbox_backlog:max > 500) or (codestra:outbox_oldest_age_seconds:max > 600)
@@ -86,10 +107,13 @@ groups:
         labels:
           severity: critical
           owner: integration
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "Outbox backlog is unhealthy for {{ $labels.application }}/{{ $labels.service }}"
           description: "Backlog count or oldest age has crossed the production threshold."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
       - alert: CodestraInboxBacklogHigh
         expr: (codestra:inbox_backlog:max > 500) or (codestra:inbox_oldest_age_seconds:max > 600)
@@ -97,10 +121,13 @@ groups:
         labels:
           severity: critical
           owner: integration
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "Inbox backlog is unhealthy for {{ $labels.application }}/{{ $labels.service }}"
           description: "Backlog count or oldest age has crossed the production threshold."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
 
       - alert: CodestraWebhookDeliveryDegraded
         expr: (codestra:webhook_delivery_success_ratio:5m < 0.95) and on (environment, server, application, service, provider) (sum without (result) (codestra:webhook_deliveries:rate5m) > 0.1)
@@ -108,7 +135,10 @@ groups:
         labels:
           severity: critical
           owner: integration
+          codestra_business: "{{ $labels.application }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
         annotations:
           summary: "Webhook delivery degraded for provider {{ $labels.provider }}"
           description: "Webhook success ratio is below 95%."
-          runbook: "codestra/README.md#validation-and-rollout"
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/README.md#validation-and-rollout"
