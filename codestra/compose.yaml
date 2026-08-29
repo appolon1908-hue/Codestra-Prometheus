@@ -1,0 +1,99 @@
+name: codestra-prometheus-authority
+
+services:
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE must be an immutable image reference containing @sha256:}
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-30d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-40GB}
+      - --web.listen-address=0.0.0.0:9090
+      - --web.enable-admin-api=false
+      - --web.enable-lifecycle=false
+      - --query.max-concurrency=20
+      - --query.timeout=2m
+    ports:
+      - ${PROMETHEUS_LISTEN_ADDRESS:-127.0.0.1:9090}:9090
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
+      - ./blackbox/targets-production.json:/etc/prometheus/blackbox-targets/production.json:ro
+      - prometheus_data:/prometheus
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    networks:
+      observability:
+        aliases:
+          - prometheus
+    healthcheck:
+      test: ["CMD", "/bin/promtool", "check", "healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Temporary ownership: there is no dedicated Codestra PostgreSQL Exporter
+  # repository yet. This service must move to that authority when one exists.
+  postgres-exporter:
+    image: ${POSTGRES_EXPORTER_IMAGE:?POSTGRES_EXPORTER_IMAGE must be an immutable image reference containing @sha256:}
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    environment:
+      DATA_SOURCE_URI_FILE: /run/secrets/postgres_exporter_uri
+      DATA_SOURCE_USER_FILE: /run/secrets/postgres_exporter_user
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_exporter_password
+    expose:
+      - "9187"
+    secrets:
+      - postgres_exporter_uri
+      - postgres_exporter_user
+      - postgres_exporter_password
+    networks:
+      observability:
+        aliases:
+          - postgres-exporter
+      database: {}
+    healthcheck:
+      test: ["CMD", "/bin/postgres_exporter", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  observability:
+    external: true
+    name: ${CODESTRA_OBSERVABILITY_NETWORK:-codestra-observability}
+  database:
+    external: true
+    name: ${CODESTRA_DATABASE_NETWORK:-codestra-database}
+
+volumes:
+  prometheus_data:
+
+secrets:
+  postgres_exporter_uri:
+    external: true
+    name: ${POSTGRES_EXPORTER_URI_SECRET:-codestra-postgres-exporter-uri}
+  postgres_exporter_user:
+    external: true
+    name: ${POSTGRES_EXPORTER_USER_SECRET:-codestra-postgres-exporter-user}
+  postgres_exporter_password:
+    external: true
+    name: ${POSTGRES_EXPORTER_PASSWORD_SECRET:-codestra-postgres-exporter-password}
