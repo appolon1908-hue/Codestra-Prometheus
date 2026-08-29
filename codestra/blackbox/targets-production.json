@@ -1,0 +1,5 @@
+[
+  {"targets":["https://api.codestra.co/api/v1/health"],"labels":{"environment":"production","server":"external","application":"codestra","service":"public-api","tenant_scope":"aggregate","probe_enabled":"true"}},
+  {"targets":["https://auth.codestra.co/realms/codestra/.well-known/openid-configuration"],"labels":{"environment":"production","server":"external","application":"identity","service":"oidc-discovery","tenant_scope":"aggregate","probe_enabled":"true"}},
+  {"targets":["https://codestra.co/"],"labels":{"environment":"production","server":"external","application":"codestra","service":"public-web","tenant_scope":"aggregate","probe_enabled":"true"}}
+]
