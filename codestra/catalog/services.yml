@@ -1,7 +1,14 @@
 version: 1
 owner: Codestra Platform
-prometheus_authority: appolon1908-hue/Codestra-Prometheus
-postgres_exporter_authority: appolon1908-hue/Codestra-Postgres-Exporter
+authorities:
+  metrics_collection_recording_alerts: appolon1908-hue/Codestra-Prometheus
+  alert_routing: appolon1908-hue/Codestra-Alertmanager
+  telemetry_gateway: appolon1908-hue/Codestra-Telemetry
+  node_exporter: appolon1908-hue/Codestra-Node-Exporter
+  cadvisor: appolon1908-hue/Codestra-cAdvisor
+  postgres_exporter: appolon1908-hue/Codestra-Postgres-Exporter
+  redis_exporter: appolon1908-hue/Codestra-Redis-Exporter
+  blackbox_exporter: appolon1908-hue/Codestra-Blackbox-Exporter
 required_labels:
   - environment
   - server
@@ -16,7 +23,9 @@ required_application_metrics:
   - codestra_queue_depth
   - codestra_worker_failures_total
   - codestra_outbox_backlog
+  - codestra_outbox_oldest_age_seconds
   - codestra_inbox_backlog
+  - codestra_inbox_oldest_age_seconds
   - codestra_webhook_deliveries_total
   - codestra_webhook_retries_total
   - codestra_authentication_failures_total
@@ -26,7 +35,22 @@ required_application_metrics:
   - codestra_external_provider_failures_total
   - codestra_deployment_info
   - codestra_capability_state
-services:
+infrastructure_services:
+  - {repo: appolon1908-hue/Codestra-Prometheus, application: observability, service: prometheus, endpoint: "prometheus:9090", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Codestra-Alertmanager, application: observability, service: alertmanager, endpoint: "alertmanager:9093", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Codestra-Telemetry, application: observability, service: opentelemetry-collector, endpoint: "otel-collector:8888", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Codestra-Telemetry, application: observability, service: opentelemetry-ingest, endpoint: "otel-collector:8889", path: /metrics, activation: pending}
+  - {repo: appolon1908-hue/Codestra-Node-Exporter, application: infrastructure, service: node-exporter, endpoint: "private-host:9100", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Codestra-cAdvisor, application: infrastructure, service: cadvisor, endpoint: "private-host:8080", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Codestra-Postgres-Exporter, application: databases, service: postgres-exporter, endpoint: "postgres-exporter:9187", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Codestra-Redis-Exporter, application: databases, service: redis-exporter, endpoint: "redis-exporter:9121", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Codestra-Blackbox-Exporter, application: observability, service: blackbox-exporter, endpoint: "blackbox-exporter:9115", path: /probe, activation: active}
+  - {repo: appolon1908-hue/Caddy, application: edge, service: caddy, endpoint: "caddy:2020", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Kong, application: gateway, service: kong, endpoint: "kong:8100", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Keycloak, application: identity, service: keycloak, endpoint: "keycloak:9000", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/N8N, application: automation, service: n8n, endpoint: "n8n-main:5678", path: /metrics, activation: active}
+  - {repo: appolon1908-hue/Odoo, application: erp, service: odoo, endpoint: "odoo:8069", path: /codestra/metrics, activation: active}
+application_services:
   - {repo: appolon1908-hue/Middleware-, application: integration, service: middleware, endpoint: "middleware-control-plane:8096", path: /metrics, exposure: implemented}
   - {repo: appolon1908-hue/codestra-backend, application: codestra, service: codestra-backend, endpoint: "codestra-backend:8000", path: /metrics, exposure: rollout-required}
   - {repo: appolon1908-hue/codestra-provisioning-service, application: provisioning, service: provisioning-api, endpoint: "codestra-provisioning-service:9464", path: /metrics, exposure: rollout-required}
