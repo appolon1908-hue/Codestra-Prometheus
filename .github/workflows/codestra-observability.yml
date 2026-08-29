@@ -56,7 +56,8 @@ jobs:
         run: |
           docker compose -f codestra/compose.yaml config > /tmp/codestra-prometheus-compose.yaml
           test -s /tmp/codestra-prometheus-compose.yaml
-          ! grep -Eq ':latest([[:space:]]|$)|0\.0\.0\.0:9090' /tmp/codestra-prometheus-compose.yaml
+          grep -Eq 'host_ip:[[:space:]]*127\.0\.0\.1' /tmp/codestra-prometheus-compose.yaml
+          ! grep -Eq ':latest([[:space:]]|$)|host_ip:[[:space:]]*(0\.0\.0\.0|::)' /tmp/codestra-prometheus-compose.yaml
 
       - name: Set up Go from locked upstream source
         uses: actions/setup-go@v6
