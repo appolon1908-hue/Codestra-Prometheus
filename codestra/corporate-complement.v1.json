@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0",
+  "component": "prometheus",
+  "codestraRole": "metrics and alert-rule authority",
+  "corporatePurpose": "Provide consistent corporate metrics, SLOs, target health and alert inputs across every Codestra business and platform service.",
+  "businessPortfolio": ["codestra", "moneybee", "beyvra", "breero", "larim-a", "transportation", "booked4seasons", "social", "klyrow", "telnexa", "kyqra", "restaurant", "provisioning"],
+  "standardDimensions": ["codestra_business", "application", "service", "environment", "server", "region", "deployment"],
+  "forbiddenLabels": ["tenant_id", "customer_id", "user_id", "email", "phone", "request_id", "trace_id", "message_id", "financial_transaction_id"],
+  "corporateFeatures": ["business_rollup_recording_rules", "slo_error_budgets", "alert_rule_metadata", "cardinality_budgets", "deployment_info_metrics", "provider_health_metrics", "reconciliation_backlog_metrics", "capacity_forecast_inputs"],
+  "dashboardContribution": ["executive_health_scorecards", "slo_panels", "alert_source_metrics", "capacity_panels", "business_rollups"],
+  "beyvraBoundary": "Expose aggregate latency, error, market-data freshness and reconciliation metrics only; no customer-level financial state as labels.",
+  "activationStatus": "SOURCE_PREPARED_NOT_DEPLOYED"
+}
