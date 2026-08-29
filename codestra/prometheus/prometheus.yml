@@ -43,7 +43,33 @@ scrape_configs:
         action: keep
     metric_relabel_configs:
       - action: labeldrop
-        regex: '(?i)^(tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|consumer|workspace|token|secret|password|session_id|request_id|correlation_id|trace_id|span_id|lead_id|order_id|message_id|workflow_id|execution_id|webhook_id|idempotency_key|raw_path|path|uri|url|query|query_string|container_id|image_id|id)$'
+        regex: '(?i)^(tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|consumer|workspace|token|secret|password|session_id|request_id|correlation_id|trace_id|span_id|lead_id|order_id|message_id|workflow_id|execution_id|webhook_id|idempotency_key|raw_path|path|uri|url|query|query_string|client_address|network_peer_address|db_statement|http_target|http_url|url_full|service_instance_id|host_id|container_id|image_id|process_pid|id)$'
+
+  - job_name: otel-application-metrics
+    honor_labels: true
+    static_configs:
+      - targets: ["otel-collector:8889"]
+        labels:
+          activation: pending
+          job_class: backend
+          environment: production
+          server: codestra-core-01
+          application: observability
+          service: opentelemetry-ingest
+          tenant_scope: aggregate
+    relabel_configs:
+      - source_labels: [activation]
+        regex: active
+        action: keep
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'target_info|otel_scope_info'
+        action: drop
+      - source_labels: [tenant_scope]
+        regex: aggregate
+        action: keep
+      - action: labeldrop
+        regex: '(?i)^(tenant_id|tenant_name|organization_id|organization_name|customer_id|customer_name|account_id|user_id|user_name|email|phone|consumer|workspace|token|secret|password|session_id|request_id|correlation_id|trace_id|span_id|lead_id|order_id|message_id|workflow_id|execution_id|webhook_id|idempotency_key|raw_path|path|uri|url|query|query_string|client_address|network_peer_address|db_statement|http_target|http_url|url_full|service_instance_id|host_id|container_id|image_id|process_pid|codestra_application|service_name|deployment_environment_name|host_name|codestra_tenant_scope|id)$'
 
   - job_name: blackbox
     metrics_path: /probe
