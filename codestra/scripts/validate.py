@@ -5,17 +5,39 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUIRED_LABELS = {
-    "activation",
-    "job_class",
+BUSINESSES = {
+    "codestra",
+    "moneybee",
+    "beyvra",
+    "breero",
+    "larim-a",
+    "transportation",
+    "booked4seasons",
+    "social",
+    "klyrow",
+    "telnexa",
+    "kyqra",
+    "restaurant",
+    "provisioning",
+}
+APPROVED_BUSINESS_LABELS = BUSINESSES | {"platform"}
+CORPORATE_LABELS = {
+    "codestra_business",
     "environment",
+    "region",
+    "deployment",
     "server",
     "application",
     "service",
+}
+REQUIRED_TARGET_LABELS = CORPORATE_LABELS | {
+    "activation",
+    "job_class",
     "tenant_scope",
 }
 ALLOWED_ENVIRONMENTS = {"development", "test", "staging", "production"}
@@ -44,7 +66,7 @@ FORBIDDEN = re.compile(
     r"execution_id|webhook_id|idempotency_key|raw_path|path|uri|url|query|"
     r"query_string|client_address|network_peer_address|db_statement|http_target|"
     r"http_url|url_full|service_instance_id|host_id|container_id|image_id|"
-    r"process_pid|id)$"
+    r"process_pid|pod_uid|exception_message|id)$"
 )
 REQUIRED_SERVICES = {
     "node-exporter",
@@ -59,6 +81,42 @@ REQUIRED_SERVICES = {
     "odoo",
     "opentelemetry-collector",
     "alertmanager",
+    "loki",
+    "tempo",
+    "grafana",
+    "alloy",
+    "openbao",
+    "codestra-backend",
+    "moneybee-backend",
+    "beyvra-backend",
+    "breero-backend",
+    "larim-a-backend",
+    "transportation-backend",
+    "booked4seasons-backend",
+    "social-codestra",
+    "klyrow-gateway",
+    "telnexa-gateway",
+    "kyqra-crawler",
+    "restaurant-backend",
+    "provisioning-api",
+}
+REQUIRED_SLO_RECORDS = {
+    "codestra:slo_http_error_ratio:5m",
+    "codestra:slo_http_error_ratio:1h",
+    "codestra:slo_http_error_ratio:6h",
+    "codestra:slo_http_error_ratio:3d",
+    "codestra:slo_http_burn_rate:5m",
+    "codestra:slo_http_burn_rate:1h",
+    "codestra:slo_http_burn_rate:6h",
+    "codestra:slo_http_burn_rate:3d",
+}
+REQUIRED_CONTROL_ALERTS = {
+    "CodestraWatchdog",
+    "CodestraSLOFastBurn",
+    "CodestraSLOSlowBurn",
+    "CodestraTargetSampleBudgetExceeded",
+    "CodestraPrometheusRuleEvaluationFailures",
+    "CodestraPrometheusNotificationFailures",
 }
 
 
@@ -66,42 +124,118 @@ def fail(message: str) -> None:
     raise SystemExit(message)
 
 
-def load_yaml(path: Path):
+def load_yaml(path: Path) -> Any:
     try:
         return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except Exception as exc:  # pragma: no cover - diagnostic path
         fail(f"invalid YAML {path.relative_to(ROOT)}: {exc}")
 
 
-def validate_targets() -> None:
-    targets_path = ROOT / "prometheus" / "targets" / "production.json"
+def validate_profile() -> None:
+    path = ROOT / "enterprise-profile.v1.json"
     try:
-        groups = json.loads(targets_path.read_text(encoding="utf-8"))
+        profile = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        fail(f"invalid target JSON: {exc}")
+        fail(f"invalid enterprise profile: {exc}")
+    if profile.get("schemaVersion") != "1.1":
+        fail("enterprise profile schemaVersion must be 1.1")
+    if profile.get("canonicalHostname") != "prom.codestra.media":
+        fail("canonical Prometheus hostname mismatch")
+    if profile.get("status") != "CONFIG_PREPARED_NOT_DEPLOYED":
+        fail("Prometheus profile must remain CONFIG_PREPARED_NOT_DEPLOYED")
+    if profile.get("exposure") != "internal_private":
+        fail("native Prometheus exposure must remain internal_private")
+    if set(profile.get("businessScope", [])) != BUSINESSES:
+        fail("enterprise profile does not represent the complete Codestra portfolio")
+    if set(profile.get("requiredTargetLabels", [])) != CORPORATE_LABELS:
+        fail("enterprise profile corporate target labels do not match policy")
+    if not all(profile.get("features", {}).get(name) is True for name in (
+        "recordingRules",
+        "businessRollups",
+        "sliAndSloEvaluation",
+        "multiWindowBurnRates",
+        "cardinalityBudgets",
+        "alertmanagerIntegration",
+        "pendingTargetActivationGates",
+        "selfMonitoring",
+    )):
+        fail("one or more required corporate Prometheus features are disabled")
 
-    seen = set()
+
+def validate_catalog() -> None:
+    catalog = load_yaml(ROOT / "catalog" / "services.yml")
+    if catalog.get("version") != 2:
+        fail("service catalogue version must be 2")
+    catalogue_businesses = {
+        entry.get("id") for entry in catalog.get("businesses", []) if isinstance(entry, dict)
+    }
+    if catalogue_businesses != BUSINESSES:
+        fail("service catalogue business list is incomplete or contains unknown IDs")
+    if set(catalog.get("required_labels", [])) != REQUIRED_TARGET_LABELS:
+        fail("service catalogue required_labels must match the governed target contract")
+    product_businesses = {
+        entry.get("codestra_business")
+        for entry in catalog.get("application_services", [])
+        if isinstance(entry, dict)
+    }
+    if product_businesses != BUSINESSES:
+        fail("application service catalogue must include every managed business")
+    for entry in catalog.get("application_services", []):
+        if entry.get("activation") != "pending":
+            fail(f"business service must remain pending until evidence exists: {entry}")
+
+
+def validate_target_groups(path: Path, required_labels: set[str]) -> tuple[set[str], set[str]]:
+    try:
+        groups = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(f"invalid target JSON {path.relative_to(ROOT)}: {exc}")
+    if not isinstance(groups, list) or not groups:
+        fail(f"target file must contain a non-empty list: {path.relative_to(ROOT)}")
+
+    services: set[str] = set()
+    businesses: set[str] = set()
     for group in groups:
         if not group.get("targets"):
-            fail("target group without targets")
+            fail(f"target group without targets in {path.relative_to(ROOT)}")
         labels = group.get("labels", {})
-        missing = REQUIRED_LABELS - labels.keys()
+        missing = required_labels - labels.keys()
         if missing:
             fail(f"target {group['targets']} missing labels {sorted(missing)}")
+        if labels["codestra_business"] not in APPROVED_BUSINESS_LABELS:
+            fail(f"target {group['targets']} has unknown business label")
         if labels["environment"] not in ALLOWED_ENVIRONMENTS:
             fail(f"target {group['targets']} has invalid environment")
-        if labels["activation"] not in ALLOWED_ACTIVATION:
+        if not str(labels.get("region", "")).strip():
+            fail(f"target {group['targets']} has empty region")
+        if not str(labels.get("deployment", "")).strip():
+            fail(f"target {group['targets']} has empty deployment")
+        if "activation" in required_labels and labels["activation"] not in ALLOWED_ACTIVATION:
             fail(f"target {group['targets']} has invalid activation")
-        if labels["tenant_scope"] not in ALLOWED_TENANT_SCOPES:
+        if "tenant_scope" in required_labels and labels["tenant_scope"] not in ALLOWED_TENANT_SCOPES:
             fail(f"target {group['targets']} has invalid tenant_scope")
+        if labels["codestra_business"] in BUSINESSES and labels.get("activation") != "pending":
+            fail(f"business target must remain pending before service-owned evidence: {group['targets']}")
         forbidden = [key for key in labels if FORBIDDEN.fullmatch(key)]
         if forbidden:
             fail(f"target {group['targets']} has forbidden labels {forbidden}")
-        seen.add(labels["service"])
+        services.add(labels["service"])
+        businesses.add(labels["codestra_business"])
+    return services, businesses
 
-    missing_services = REQUIRED_SERVICES - seen
+
+def validate_targets() -> None:
+    services, businesses = validate_target_groups(
+        ROOT / "prometheus" / "targets" / "production.json", REQUIRED_TARGET_LABELS
+    )
+    missing_services = REQUIRED_SERVICES - services
     if missing_services:
         fail(f"missing required services {sorted(missing_services)}")
+    if not BUSINESSES.issubset(businesses):
+        fail(f"production target catalogue is missing businesses {sorted(BUSINESSES - businesses)}")
+
+    blackbox_labels = CORPORATE_LABELS | {"tenant_scope", "probe_enabled"}
+    validate_target_groups(ROOT / "blackbox" / "targets-production.json", blackbox_labels)
 
 
 def validate_scrape_config() -> None:
@@ -112,6 +246,20 @@ def validate_scrape_config() -> None:
     if not config.get("alerting", {}).get("alertmanagers"):
         fail("Alertmanager is required")
 
+    external_labels = config.get("global", {}).get("external_labels", {})
+    for label in ("codestra_business", "environment", "region", "deployment"):
+        if not external_labels.get(label):
+            fail(f"global external label is required: {label}")
+
+    for job_name, job in jobs.items():
+        for budget in ("sample_limit", "label_limit", "label_name_length_limit", "label_value_length_limit", "body_size_limit"):
+            if budget not in job:
+                fail(f"scrape job {job_name} is missing budget {budget}")
+
+    self_configs = jobs["prometheus"].get("static_configs", [])
+    if len(self_configs) != 1 or not CORPORATE_LABELS.issubset(self_configs[0].get("labels", {})):
+        fail("Prometheus self-scrape requires all corporate labels")
+
     otel_job = jobs["otel-application-metrics"]
     if otel_job.get("honor_labels") is not True:
         fail("OTLP application scrape must preserve sanitized canonical labels")
@@ -121,6 +269,8 @@ def validate_scrape_config() -> None:
     otel_labels = static_configs[0].get("labels", {})
     if otel_labels.get("activation") != "pending":
         fail("OTLP application scrape must remain pending until staging evidence passes")
+    if not CORPORATE_LABELS.issubset(otel_labels):
+        fail("OTLP application target requires all corporate labels")
     if static_configs[0].get("targets") != ["otel-collector:8889"]:
         fail("OTLP application scrape must target otel-collector:8889")
     metric_rules = otel_job.get("metric_relabel_configs", [])
@@ -158,34 +308,61 @@ def validate_rules() -> None:
                     if missing_labels:
                         fail(f"alert {alert} missing labels {sorted(missing_labels)}")
                     if missing_annotations:
-                        fail(
-                            f"alert {alert} missing annotations {sorted(missing_annotations)}"
-                        )
+                        fail(f"alert {alert} missing annotations {sorted(missing_annotations)}")
                     if labels["severity"] not in ALLOWED_SEVERITIES:
                         fail(f"alert {alert} has invalid severity {labels['severity']}")
                     if not str(annotations["runbook_url"]).startswith("https://"):
                         fail(f"alert {alert} runbook_url must be HTTPS")
 
-    if not records or not alerts:
-        fail("recording rules and alerts are required")
-    if "CodestraWatchdog" not in alerts:
-        fail("CodestraWatchdog is required to prove the end-to-end alert path")
+    missing_records = REQUIRED_SLO_RECORDS - records
+    if missing_records:
+        fail(f"missing SLO recording rules {sorted(missing_records)}")
+    missing_alerts = REQUIRED_CONTROL_ALERTS - alerts
+    if missing_alerts:
+        fail(f"missing control alerts {sorted(missing_alerts)}")
 
 
 def validate_runtime() -> None:
     compose = load_yaml(ROOT / "compose.yaml")
     for name, service in compose.get("services", {}).items():
-        image = service.get("image", "")
+        image = str(service.get("image", ""))
         if "${" not in image or "@sha256:" not in image:
             fail(f"{name} must require an immutable image")
+        if service.get("read_only") is not True:
+            fail(f"{name} must use a read-only root filesystem")
+        if "ALL" not in service.get("cap_drop", []):
+            fail(f"{name} must drop all Linux capabilities")
+        if "no-new-privileges:true" not in service.get("security_opt", []):
+            fail(f"{name} must set no-new-privileges")
+        for port in service.get("ports", []):
+            if "127.0.0.1" not in str(port) and "${PROMETHEUS_LISTEN_ADDRESS:-127.0.0.1:9090}" not in str(port):
+                fail(f"{name} may publish only a loopback-bound port")
+
+
+def validate_secret_safety() -> None:
+    text = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in ROOT.rglob("*")
+        if path.is_file()
+    )
+    for pattern in (
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "AKIA",
+    ):
+        if pattern in text:
+            fail(f"secret-shaped material found in Codestra overlay: {pattern}")
 
 
 def main() -> int:
+    validate_profile()
+    validate_catalog()
     validate_targets()
     validate_scrape_config()
     validate_rules()
     validate_runtime()
-    print("Codestra Prometheus authority validation passed")
+    validate_secret_safety()
+    print("Codestra Prometheus corporate authority validation passed")
     return 0
 
 
