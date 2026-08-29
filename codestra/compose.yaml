@@ -42,8 +42,8 @@ services:
       retries: 5
       start_period: 20s
 
-  # Temporary ownership: there is no dedicated Codestra PostgreSQL Exporter
-  # repository yet. This service must move to that authority when one exists.
+  # Exporter source/configuration authority: appolon1908-hue/Codestra-Postgres-Exporter.
+  # This Compose entry is integration wiring only and must consume an accepted immutable artifact.
   postgres-exporter:
     image: ${POSTGRES_EXPORTER_IMAGE:?POSTGRES_EXPORTER_IMAGE must be an immutable image reference containing @sha256:}
     restart: unless-stopped
