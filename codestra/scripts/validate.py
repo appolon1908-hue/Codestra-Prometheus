@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Fail-closed validation for the Codestra Prometheus corporate overlay."""
+
 from __future__ import annotations
 
 import json
@@ -149,7 +151,7 @@ def validate_profile() -> None:
         fail("enterprise profile does not represent the complete Codestra portfolio")
     if set(profile.get("requiredTargetLabels", [])) != CORPORATE_LABELS:
         fail("enterprise profile corporate target labels do not match policy")
-    if not all(profile.get("features", {}).get(name) is True for name in (
+    required_features = {
         "recordingRules",
         "businessRollups",
         "sliAndSloEvaluation",
@@ -158,8 +160,13 @@ def validate_profile() -> None:
         "alertmanagerIntegration",
         "pendingTargetActivationGates",
         "selfMonitoring",
-    )):
-        fail("one or more required corporate Prometheus features are disabled")
+    }
+    disabled = sorted(
+        name for name in required_features
+        if profile.get("features", {}).get(name) is not True
+    )
+    if disabled:
+        fail(f"required corporate Prometheus features are disabled: {disabled}")
 
 
 def validate_catalog() -> None:
@@ -167,25 +174,31 @@ def validate_catalog() -> None:
     if catalog.get("version") != 2:
         fail("service catalogue version must be 2")
     catalogue_businesses = {
-        entry.get("id") for entry in catalog.get("businesses", []) if isinstance(entry, dict)
+        entry.get("id")
+        for entry in catalog.get("businesses", [])
+        if isinstance(entry, dict)
     }
     if catalogue_businesses != BUSINESSES:
         fail("service catalogue business list is incomplete or contains unknown IDs")
     if set(catalog.get("required_labels", [])) != REQUIRED_TARGET_LABELS:
         fail("service catalogue required_labels must match the governed target contract")
-    product_businesses = {
-        entry.get("codestra_business")
+    application_services = [
+        entry
         for entry in catalog.get("application_services", [])
         if isinstance(entry, dict)
-    }
+    ]
+    product_businesses = {entry.get("codestra_business") for entry in application_services}
     if product_businesses != BUSINESSES:
         fail("application service catalogue must include every managed business")
-    for entry in catalog.get("application_services", []):
+    for entry in application_services:
         if entry.get("activation") != "pending":
             fail(f"business service must remain pending until evidence exists: {entry}")
 
 
-def validate_target_groups(path: Path, required_labels: set[str]) -> tuple[set[str], set[str]]:
+def validate_target_groups(
+    path: Path,
+    required_labels: set[str],
+) -> tuple[set[str], set[str]]:
     try:
         groups = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -196,7 +209,7 @@ def validate_target_groups(path: Path, required_labels: set[str]) -> tuple[set[s
     services: set[str] = set()
     businesses: set[str] = set()
     for group in groups:
-        if not group.get("targets"):
+        if not isinstance(group, dict) or not group.get("targets"):
             fail(f"target group without targets in {path.relative_to(ROOT)}")
         labels = group.get("labels", {})
         missing = required_labels - labels.keys()
@@ -230,7 +243,8 @@ def validate_target_groups(path: Path, required_labels: set[str]) -> tuple[set[s
 
 def validate_targets() -> None:
     services, businesses = validate_target_groups(
-        ROOT / "prometheus" / "targets" / "production.json", REQUIRED_TARGET_LABELS
+        ROOT / "prometheus" / "targets" / "production.json",
+        REQUIRED_TARGET_LABELS,
     )
     missing_services = REQUIRED_SERVICES - services
     if missing_services:
@@ -239,7 +253,10 @@ def validate_targets() -> None:
         fail(f"production target catalogue is missing businesses {sorted(BUSINESSES - businesses)}")
 
     blackbox_labels = CORPORATE_LABELS | {"tenant_scope", "probe_enabled"}
-    validate_target_groups(ROOT / "blackbox" / "targets-production.json", blackbox_labels)
+    validate_target_groups(
+        ROOT / "blackbox" / "targets-production.json",
+        blackbox_labels,
+    )
 
 
 def validate_scrape_config() -> None:
@@ -255,13 +272,22 @@ def validate_scrape_config() -> None:
         if not external_labels.get(label):
             fail(f"global external label is required: {label}")
 
+    budgets = {
+        "sample_limit",
+        "label_limit",
+        "label_name_length_limit",
+        "label_value_length_limit",
+        "body_size_limit",
+    }
     for job_name, job in jobs.items():
-        for budget in ("sample_limit", "label_limit", "label_name_length_limit", "label_value_length_limit", "body_size_limit"):
-            if budget not in job:
-                fail(f"scrape job {job_name} is missing budget {budget}")
+        missing = budgets - job.keys()
+        if missing:
+            fail(f"scrape job {job_name} is missing budgets {sorted(missing)}")
 
     self_configs = jobs["prometheus"].get("static_configs", [])
-    if len(self_configs) != 1 or not CORPORATE_LABELS.issubset(self_configs[0].get("labels", {})):
+    if len(self_configs) != 1 or not CORPORATE_LABELS.issubset(
+        self_configs[0].get("labels", {})
+    ):
         fail("Prometheus self-scrape requires all corporate labels")
 
     otel_job = jobs["otel-application-metrics"]
@@ -290,7 +316,10 @@ def validate_scrape_config() -> None:
 def validate_rules() -> None:
     records: set[str] = set()
     alerts: set[str] = set()
-    for path in sorted((ROOT / "prometheus" / "rules").glob("*.yml")):
+    rule_files = sorted((ROOT / "prometheus" / "rules").glob("*.yml"))
+    if not rule_files:
+        fail("no Prometheus rule files found")
+    for path in rule_files:
         doc = load_yaml(path)
         for group in doc.get("groups", []):
             for rule in group.get("rules", []):
@@ -328,7 +357,10 @@ def validate_rules() -> None:
 
 def validate_runtime() -> None:
     compose = load_yaml(ROOT / "compose.yaml")
-    for name, service in compose.get("services", {}).items():
+    services = compose.get("services", {})
+    if not services:
+        fail("runtime candidate must define services")
+    for name, service in services.items():
         image = str(service.get("image", ""))
         if "${" not in image or "@sha256:" not in image:
             fail(f"{name} must require an immutable image")
@@ -339,23 +371,32 @@ def validate_runtime() -> None:
         if "no-new-privileges:true" not in service.get("security_opt", []):
             fail(f"{name} must set no-new-privileges")
         for port in service.get("ports", []):
-            if "127.0.0.1" not in str(port) and "${PROMETHEUS_LISTEN_ADDRESS:-127.0.0.1:9090}" not in str(port):
+            rendered = str(port)
+            if (
+                "127.0.0.1" not in rendered
+                and "${PROMETHEUS_LISTEN_ADDRESS:-127.0.0.1:9090}" not in rendered
+            ):
                 fail(f"{name} may publish only a loopback-bound port")
 
 
 def validate_secret_safety() -> None:
-    text = "\n".join(
-        path.read_text(encoding="utf-8", errors="replace")
-        for path in ROOT.rglob("*")
-        if path.is_file()
+    # Build signatures in pieces so this validator does not match its own source.
+    marker = "-" * 5
+    signatures = (
+        marker + "BEGIN " + "PRIVATE KEY" + marker,
+        marker + "BEGIN " + "OPENSSH PRIVATE KEY" + marker,
+        "AK" + "IA",
     )
-    for pattern in (
-        "-----BEGIN PRIVATE KEY-----",
-        "-----BEGIN OPENSSH PRIVATE KEY-----",
-        "AKIA",
-    ):
-        if pattern in text:
-            fail(f"secret-shaped material found in Codestra overlay: {pattern}")
+    for path in ROOT.rglob("*"):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for signature in signatures:
+            if signature in text:
+                fail(
+                    "secret-shaped material found in Codestra overlay: "
+                    f"{path.relative_to(ROOT)}"
+                )
 
 
 def main() -> int:
