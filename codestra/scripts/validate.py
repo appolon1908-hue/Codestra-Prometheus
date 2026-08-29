@@ -214,7 +214,11 @@ def validate_target_groups(path: Path, required_labels: set[str]) -> tuple[set[s
             fail(f"target {group['targets']} has invalid activation")
         if "tenant_scope" in required_labels and labels["tenant_scope"] not in ALLOWED_TENANT_SCOPES:
             fail(f"target {group['targets']} has invalid tenant_scope")
-        if labels["codestra_business"] in BUSINESSES and labels.get("activation") != "pending":
+        if (
+            "activation" in required_labels
+            and labels["codestra_business"] in BUSINESSES
+            and labels.get("activation") != "pending"
+        ):
             fail(f"business target must remain pending before service-owned evidence: {group['targets']}")
         forbidden = [key for key in labels if FORBIDDEN.fullmatch(key)]
         if forbidden:
