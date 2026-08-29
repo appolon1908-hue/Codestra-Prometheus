@@ -1,6 +1,7 @@
 version: 1
 owner: Codestra Platform
 prometheus_authority: appolon1908-hue/Codestra-Prometheus
+postgres_exporter_authority: appolon1908-hue/Codestra-Postgres-Exporter
 required_labels:
   - environment
   - server
