@@ -1,0 +1,43 @@
+version: 1
+owner: Codestra Platform
+prometheus_authority: appolon1908-hue/Codestra-Prometheus
+required_labels:
+  - environment
+  - server
+  - application
+  - service
+  - tenant_scope
+required_application_metrics:
+  - codestra_http_requests_total
+  - codestra_http_request_duration_seconds
+  - codestra_dependency_latency_seconds
+  - codestra_database_latency_seconds
+  - codestra_queue_depth
+  - codestra_worker_failures_total
+  - codestra_outbox_backlog
+  - codestra_inbox_backlog
+  - codestra_webhook_deliveries_total
+  - codestra_webhook_retries_total
+  - codestra_authentication_failures_total
+  - codestra_authorization_denials_total
+  - codestra_idempotency_conflicts_total
+  - codestra_reconciliation_failures_total
+  - codestra_external_provider_failures_total
+  - codestra_deployment_info
+  - codestra_capability_state
+services:
+  - {repo: appolon1908-hue/Middleware-, application: integration, service: middleware, endpoint: "middleware-control-plane:8096", path: /metrics, exposure: implemented}
+  - {repo: appolon1908-hue/codestra-backend, application: codestra, service: codestra-backend, endpoint: "codestra-backend:8000", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/codestra-provisioning-service, application: provisioning, service: provisioning-api, endpoint: "codestra-provisioning-service:9464", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/beyvra-backend, application: beyvra, service: beyvra-backend, endpoint: "beyvra-backend:8000", path: /metrics, exposure: implemented-partial}
+  - {repo: appolon1908-hue/Breero.com, application: breero, service: breero-backend, endpoint: "breero-backend:8000", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/LARIM-A-Backend, application: larim-a, service: larim-a-backend, endpoint: "larim-a-backend:8000", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/transportation-backend-, application: transportation, service: transportation-backend, endpoint: "transportation-backend:8000", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/social.codestra.co, application: social, service: social-codestra, endpoint: "social-codestra:3000", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/telnexa, application: telnexa, service: telnexa-gateway, endpoint: "telnexa-gateway:8000", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/klyrow.com, application: klyrow, service: klyrow-gateway, endpoint: "klyrow-gateway:8000", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/kyqra-crawler, application: kyqra, service: kyqra-crawler, endpoint: "kyqra-crawler:3100", path: /metrics, exposure: rollout-required}
+  - {repo: appolon1908-hue/Vicidialer-Codestra, application: contact-center, service: vicidial-adapter, endpoint: "vicidial-adapter:8000", path: /metrics, exposure: rollout-required}
+exclusions:
+  - repo: appolon1908-hue/Moneybee-Backend
+    reason: owner directive forbids changes until explicitly reversed
