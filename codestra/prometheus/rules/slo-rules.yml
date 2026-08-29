@@ -86,21 +86,6 @@ groups:
           description: "Prometheus has more than two million active head series for 15 minutes. Investigate recent target activation or cardinality growth."
           runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/docs/RUNBOOKS.md#head-series-capacity"
 
-      - alert: CodestraPrometheusRuleEvaluationFailures
-        expr: increase(prometheus_rule_evaluation_failures_total[10m]) > 0
-        for: 5m
-        labels:
-          severity: high
-          owner: codestra-observability
-          codestra_business: platform
-          service: prometheus
-          environment: production
-          alert_family: control-plane
-        annotations:
-          summary: "Prometheus rule evaluation is failing"
-          description: "One or more recording or alerting rules failed during the last 10 minutes."
-          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/docs/RUNBOOKS.md#rule-evaluation-failures"
-
       - alert: CodestraPrometheusNotificationFailures
         expr: increase(prometheus_notifications_errors_total[10m]) > 0
         for: 5m
