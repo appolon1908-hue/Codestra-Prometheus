@@ -10,6 +10,9 @@ import re
 import sys
 from collections.abc import Mapping
 
+CODESTRA = pathlib.Path(__file__).resolve().parents[1]
+COMPOSE = CODESTRA / "compose.yaml"
+
 REPOSITORY_RE = re.compile(
     r"^(?:[a-z0-9.-]+(?::[0-9]+)?/)?"
     r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$"
@@ -20,6 +23,18 @@ IMAGE_INPUTS = {
     "postgres-exporter": (
         "POSTGRES_EXPORTER_IMAGE_REPOSITORY",
         "POSTGRES_EXPORTER_IMAGE_DIGEST",
+    ),
+}
+EXPECTED_COMPOSE_IMAGES = {
+    "prometheus": (
+        "image: ${PROMETHEUS_IMAGE_REPOSITORY:?PROMETHEUS_IMAGE_REPOSITORY is required}"
+        "@sha256:${PROMETHEUS_IMAGE_DIGEST:?PROMETHEUS_IMAGE_DIGEST must be a "
+        "64-character lowercase hexadecimal digest}"
+    ),
+    "postgres-exporter": (
+        "image: ${POSTGRES_EXPORTER_IMAGE_REPOSITORY:?POSTGRES_EXPORTER_IMAGE_REPOSITORY "
+        "is required}@sha256:${POSTGRES_EXPORTER_IMAGE_DIGEST:?POSTGRES_EXPORTER_IMAGE_DIGEST "
+        "must be a 64-character lowercase hexadecimal digest}"
     ),
 }
 
@@ -47,6 +62,26 @@ def parse_env_file(path: pathlib.Path) -> dict[str, str]:
             fail(f"empty or duplicate environment key at {path}:{line_number}")
         values[key] = value.strip()
     return values
+
+
+def validate_compose_template() -> None:
+    try:
+        text = COMPOSE.read_text(encoding="utf-8")
+    except OSError as exc:
+        fail(f"cannot read {COMPOSE}: {exc}")
+    for component, fragment in EXPECTED_COMPOSE_IMAGES.items():
+        if fragment not in text:
+            fail(
+                f"{component} image must be structurally assembled as "
+                "repository@sha256:digest"
+            )
+    for forbidden in (
+        "${PROMETHEUS_IMAGE:",
+        "${POSTGRES_EXPORTER_IMAGE:",
+        ":latest",
+    ):
+        if forbidden in text:
+            fail(f"Compose contains mutable or legacy image input: {forbidden}")
 
 
 def validate_inputs(values: Mapping[str, str]) -> dict[str, str]:
@@ -99,6 +134,7 @@ def main() -> None:
         help="Validate image inputs from a deployment environment file instead of process env.",
     )
     args = parser.parse_args()
+    validate_compose_template()
     prove_policy()
     values: Mapping[str, str]
     values = parse_env_file(args.env_file) if args.env_file else os.environ
