@@ -159,7 +159,18 @@ groups:
           description: 'No successful {{ $labels.class }} backup has been recorded for more than 26 hours on {{ $labels.server }}.'
           runbook_url: https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/runtime-v1/RUNBOOKS.md#codestrabackupstale
       - alert: CodestraRestoreValidationStale
-        expr: codestra:restore_validation_age_seconds > 604800
+        expr: |
+          (codestra:restore_validation_age_seconds > 604800)
+          or
+          (
+            max by (codestra_business, application, service, environment, server) (
+              codestra_backup_last_success_timestamp_seconds
+            )
+            unless on (codestra_business, application, service, environment, server)
+            max by (codestra_business, application, service, environment, server) (
+              codestra_restore_validation_last_success_timestamp_seconds
+            )
+          )
         for: 1h
         labels:
           severity: high
