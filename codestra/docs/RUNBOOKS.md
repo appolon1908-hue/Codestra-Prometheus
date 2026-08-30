@@ -51,3 +51,12 @@ These runbooks are source-side operating procedures. They do not authorize deplo
 3. Confirm the Alertmanager endpoint and credentials come from approved runtime configuration and secrets.
 4. Use the approved incident continuity path while alert delivery is impaired.
 5. Do not add direct email, SMS, voice, Odoo, n8n, or provider receivers to Prometheus as a workaround.
+
+## Operations dashboard API
+
+1. Confirm the deployed Middleware, Kong, Keycloak, SDK, Grafana, and Prometheus commit SHAs match the approved release evidence.
+2. Check the `/v1/operations-dashboard/*` endpoints with a `monitoring-readonly` token carrying `health.read`, `X-Tenant-ID`, and `X-Correlation-ID`.
+3. Verify no-token, invalid-token, wrong-scope, wrong-tenant, and wrong-product calls still fail closed before trusting the dashboard.
+4. Compare dashboard API p95 latency, 5xx ratio, release-gate state, and provider canary state against the live auth matrix.
+5. If release gates or canaries are pending, keep capability flags disabled until staging read-back evidence exists.
+6. Do not expose customer identifiers, secrets, bearer tokens, raw request paths, idempotency keys, or correlation IDs as metric labels.
