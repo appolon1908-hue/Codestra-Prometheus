@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "codestra-controlled-intake-monitoring-v1",
+  "repository": "appolon1908-hue/Codestra-Prometheus",
+  "component": "prometheus",
+  "execution_question": "Why is this integration being executed?",
+  "execution_reason_required": true,
+  "source_only_preparation": true,
+  "middleware_source_authority": {
+    "repository": "appolon1908-hue/Middleware-",
+    "source_sha": "f6748a58f8d2590520a4f28776770957061cdea1",
+    "source_state": "MERGED_REVIEWED_EXACT_SHA_SELECTED_FOR_STAGING_BUILD",
+    "immutable_image_digest": null,
+    "image_digest_state": "PENDING_VERIFIED_IMMUTABLE_BUILD",
+    "required_digest_pattern": "sha256:<64-lowercase-hex>"
+  },
+  "private_endpoints": [
+    {"method": "GET", "path": "/metrics", "client_id": "monitoring-readonly", "scope": "metrics.read", "public_exposure": false},
+    {"method": "GET", "path": "/v1/runtime/safety", "client_id": "monitoring-readonly", "scope": "health.read", "public_exposure": false}
+  ],
+  "staging_credentials": {
+    "storage": "OUTSIDE_GIT",
+    "static_tokens_allowed": false,
+    "minimum_token_ttl_seconds": 60,
+    "maximum_token_ttl_seconds": 900,
+    "secret_values_committed": false,
+    "issuer_boundary": "Keycloak service identity with OpenBao-managed runtime material"
+  },
+  "staging_evidence": {
+    "collector_repository": "appolon1908-hue/Codestra-Prometheus",
+    "collector_branch": "development",
+    "checksum": null,
+    "state": "PENDING_RUNTIME_EXECUTION",
+    "must_verify": ["exact_middleware_source_sha", "immutable_image_digest", "private_network_only", "metrics_read_scope", "health_read_scope", "unauthorized_request_denied", "wrong_token_denied", "complete_metric_catalogue", "bounded_cardinality", "no_pii_or_secret_exposure", "all_external_effects_disabled", "staging_soak", "rollback_proof"]
+  },
+  "activation_policy": {
+    "prometheus_target_current_state": "pending",
+    "prometheus_target_allowed_next_state": "active",
+    "only_prometheus_target_may_transition": true,
+    "prometheus_activation_pr_required": true,
+    "prometheus_activation_pr_must_cite_image_digest": true,
+    "prometheus_activation_pr_must_cite_evidence_checksum": true,
+    "blackbox_target_current_state": "pending",
+    "blackbox_must_remain_pending": true,
+    "blackbox_activation_requires_independent_review": true,
+    "blackbox_probe_must_be_side_effect_free": true,
+    "blackbox_allowed_methods": ["GET", "HEAD"],
+    "production_activation_authorized": false
+  },
+  "runtime_effects": {
+    "deployment_performed": false,
+    "prometheus_target_activated": false,
+    "blackbox_target_activated": false,
+    "tokens_provisioned": false,
+    "staging_evidence_collected": false,
+    "production_changed": false,
+    "external_delivery_enabled": false,
+    "odoo_write_enabled": false,
+    "n8n_delivery_enabled": false,
+    "sms_enabled": false,
+    "email_enabled": false,
+    "voice_or_pstn_enabled": false
+  }
+}
