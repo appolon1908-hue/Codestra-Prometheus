@@ -6,8 +6,10 @@ on:
       - "codestra/prometheus/prometheus-staging.yml"
       - "codestra/prometheus/targets/staging.json"
       - "codestra/scripts/collect_staging_intake_evidence.py"
+      - "codestra/scripts/collect_staging_intake_evidence_v2.py"
       - "codestra/scripts/validate_staging_intake_observability.py"
       - "tests/test_collect_staging_intake_evidence.py"
+      - "tests/test_collect_staging_intake_evidence_v2.py"
       - ".github/workflows/stage6-intake-observability.yml"
   push:
     branches: [development]
@@ -15,8 +17,10 @@ on:
       - "codestra/prometheus/prometheus-staging.yml"
       - "codestra/prometheus/targets/staging.json"
       - "codestra/scripts/collect_staging_intake_evidence.py"
+      - "codestra/scripts/collect_staging_intake_evidence_v2.py"
       - "codestra/scripts/validate_staging_intake_observability.py"
       - "tests/test_collect_staging_intake_evidence.py"
+      - "tests/test_collect_staging_intake_evidence_v2.py"
       - ".github/workflows/stage6-intake-observability.yml"
 
 permissions:
@@ -38,9 +42,13 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.3
-      - run: python -m py_compile codestra/scripts/collect_staging_intake_evidence.py codestra/scripts/validate_staging_intake_observability.py
+      - run: >-
+          python -m py_compile
+          codestra/scripts/collect_staging_intake_evidence.py
+          codestra/scripts/collect_staging_intake_evidence_v2.py
+          codestra/scripts/validate_staging_intake_observability.py
       - run: python codestra/scripts/validate_staging_intake_observability.py
-      - run: python -m unittest discover -s tests -p 'test_collect_staging_intake_evidence.py' -v
+      - run: python -m unittest discover -s tests -p 'test_collect_staging_intake_evidence*.py' -v
       - name: Preserve activation boundary
         run: |
           echo 'PROMETHEUS_STAGING_TARGET=pending'

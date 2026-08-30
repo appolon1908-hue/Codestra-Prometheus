@@ -45,7 +45,9 @@ scrape_configs:
     oauth2:
       client_id: monitoring-readonly
       client_secret_file: /run/secrets/middleware-staging-monitoring-client-secret
-      token_url: https://auth.codestra.co/realms/codestra/protocol/openid-connect/token
+      scopes:
+        - metrics.read
+      token_url: https://auth-staging.codestra.co/realms/codestra/protocol/openid-connect/token
     file_sd_configs:
       - files: ["/etc/prometheus/targets/staging.json"]
         refresh_interval: 30s
