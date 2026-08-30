@@ -11,6 +11,8 @@ REPO = Path(__file__).resolve().parents[2]
 CODESTRA = REPO / "codestra"
 EXPECTED_SOURCE = "f6748a58f8d2590520a4f28776770957061cdea1"
 EXPECTED_DIGEST = "sha256:695fa3ce3f50ba4d0ae0784976b946a0a683ca731155e4bd3bd9e90a4670b820"
+STAGING_TOKEN_URL = "https://auth-staging.codestra.co/realms/codestra/protocol/openid-connect/token"
+PRODUCTION_TOKEN_URL = "https://auth.codestra.co/realms/codestra/protocol/openid-connect/token"
 
 
 def main() -> None:
@@ -23,10 +25,17 @@ def main() -> None:
     assert job["oauth2"] == {
         "client_id": "monitoring-readonly",
         "client_secret_file": "/run/secrets/middleware-staging-monitoring-client-secret",
-        "token_url": "https://auth.codestra.co/realms/codestra/protocol/openid-connect/token",
+        "scopes": ["metrics.read"],
+        "token_url": STAGING_TOKEN_URL,
     }
-    assert job["file_sd_configs"] == [{"files": ["/etc/prometheus/targets/staging.json"], "refresh_interval": "30s"}]
-    assert {tuple(item.get("source_labels", [])): (item.get("regex"), item.get("action")) for item in job["relabel_configs"]} == {
+    assert PRODUCTION_TOKEN_URL not in json.dumps(config, sort_keys=True)
+    assert job["file_sd_configs"] == [
+        {"files": ["/etc/prometheus/targets/staging.json"], "refresh_interval": "30s"}
+    ]
+    assert {
+        tuple(item.get("source_labels", [])): (item.get("regex"), item.get("action"))
+        for item in job["relabel_configs"]
+    } == {
         ("activation",): ("active", "keep"),
         ("environment",): ("staging", "keep"),
         ("tenant_scope",): ("aggregate", "keep"),
@@ -42,18 +51,48 @@ def main() -> None:
     assert labels["service"] == "middleware-intake"
     assert labels["release_id"] == "f6748a58f8d2-695fa3ce3f50"
 
-    contract = json.loads((REPO / "integration/staging-activation-contract-v1.json").read_text())
+    contract = json.loads(
+        (REPO / "integration/staging-activation-contract-v1.json").read_text()
+    )
     authority = contract["middleware_source_authority"]
     assert authority["source_sha"] == EXPECTED_SOURCE
     assert authority["immutable_image_digest"] == EXPECTED_DIGEST
     assert contract["staging_evidence"]["checksum"] is None
-    assert contract["activation_policy"]["prometheus_target_current_state"] == "pending"
-    assert contract["activation_policy"]["blackbox_target_current_state"] == "pending"
+    assert (
+        contract["activation_policy"]["prometheus_target_current_state"]
+        == "pending"
+    )
+    assert (
+        contract["activation_policy"]["blackbox_target_current_state"]
+        == "pending"
+    )
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", EXPECTED_DIGEST)
 
     collector = (CODESTRA / "scripts/collect_staging_intake_evidence.py").read_text()
-    for required in ("unauthenticated /metrics", "wrong-token /metrics", "all_external_effects_disabled", "staging_safe", "EVIDENCE_SHA256"):
+    wrapper = (
+        CODESTRA / "scripts/collect_staging_intake_evidence_v2.py"
+    ).read_text()
+    for required in (
+        "unauthenticated /metrics",
+        "wrong-token /metrics",
+        "all_external_effects_disabled",
+        "staging_safe",
+        "EVIDENCE_SHA256",
+    ):
         assert required in collector
+    for required in (
+        'METRICS_SCOPE = "metrics.read"',
+        'HEALTH_SCOPE = "health.read"',
+        "health.read token /metrics",
+        "metrics.read token /v1/runtime/safety",
+        '"token_scope_isolation": "PASS"',
+        'evidence["schema_version"] = "1.1"',
+    ):
+        assert required in wrapper, required
+
+    workflow = (REPO / ".github/workflows/stage6-intake-observability.yml").read_text()
+    assert "collect_staging_intake_evidence_v2.py" in workflow
+    assert "test_collect_staging_intake_evidence*.py" in workflow
     print("STAGING_INTAKE_OBSERVABILITY_SOURCE=PASS")
 
 
