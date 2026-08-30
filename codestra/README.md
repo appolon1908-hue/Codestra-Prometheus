@@ -16,10 +16,28 @@ Targets marked `activation=pending` are catalogued but deliberately not scraped.
 
 Promotion is `feature/* -> development -> test -> staging -> production -> main`. Merging does not deploy or enable live application behavior.
 
+## Immutable runtime preflight
+
+The Compose candidate no longer accepts one free-form image string. Each image is assembled as:
+
+```text
+IMAGE_REPOSITORY@sha256:IMAGE_DIGEST
+```
+
+Repository inputs must contain no tag or digest. Digest inputs must be exactly 64 lowercase hexadecimal characters. Every render, release packet, and deployment procedure must run the preflight against the exact environment file before invoking Compose:
+
+```bash
+python codestra/scripts/validate_runtime_images.py --env-file /run/codestra/prometheus.env
+docker compose --env-file /run/codestra/prometheus.env -f codestra/compose.yaml config
+```
+
+A direct `docker compose up` that bypasses this preflight is not an approved Codestra deployment path. CI negative-tests mutable tags, embedded digests, uppercase hashes, short hashes, and non-digest values.
+
 ## Validation and rollout
 
 ```bash
 python codestra/scripts/validate.py
+python codestra/scripts/validate_runtime_images.py --env-file /run/codestra/prometheus.env
 cd upstream && go build -o ../.bin/promtool ./cmd/promtool
 ../.bin/promtool check config ../codestra/prometheus/prometheus.yml
 ../.bin/promtool check rules ../codestra/prometheus/rules/*.yml

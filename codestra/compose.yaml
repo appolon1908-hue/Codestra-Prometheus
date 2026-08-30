@@ -2,7 +2,7 @@ name: codestra-prometheus-authority
 
 services:
   prometheus:
-    image: ${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE must be an immutable image reference containing @sha256:}
+    image: ${PROMETHEUS_IMAGE_REPOSITORY:?PROMETHEUS_IMAGE_REPOSITORY is required}@sha256:${PROMETHEUS_IMAGE_DIGEST:?PROMETHEUS_IMAGE_DIGEST must be a 64-character lowercase hexadecimal digest}
     restart: unless-stopped
     user: "65534:65534"
     read_only: true
@@ -45,7 +45,7 @@ services:
   # Exporter source/configuration authority: appolon1908-hue/Codestra-Postgres-Exporter.
   # This Compose entry is integration wiring only and must consume an accepted immutable artifact.
   postgres-exporter:
-    image: ${POSTGRES_EXPORTER_IMAGE:?POSTGRES_EXPORTER_IMAGE must be an immutable image reference containing @sha256:}
+    image: ${POSTGRES_EXPORTER_IMAGE_REPOSITORY:?POSTGRES_EXPORTER_IMAGE_REPOSITORY is required}@sha256:${POSTGRES_EXPORTER_IMAGE_DIGEST:?POSTGRES_EXPORTER_IMAGE_DIGEST must be a 64-character lowercase hexadecimal digest}
     restart: unless-stopped
     user: "65534:65534"
     read_only: true
