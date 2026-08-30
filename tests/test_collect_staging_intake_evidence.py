@@ -38,22 +38,31 @@ def metrics_payload() -> bytes:
     for family in sorted(collector.EXPECTED_METRIC_FAMILIES):
         rows.extend((f"# HELP {family} test", f"# TYPE {family} gauge"))
     rows.append('intake_inbox_backlog{codestra_business="platform",application="integration",service="middleware-api",environment="staging"} 0')
+    rows.append(f'codestra_release_info{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"}} 1')
     return ("\n".join(rows) + "\n").encode()
 
 
-SAFETY = json.dumps({
-    "environment": "staging",
-    "runtime_profile_id": "codestra-middleware-staging-intake-observability-v1",
-    "release": {"source_sha": SOURCE, "image_digest": DIGEST, "schema_head": "0003_immutable_event_ledger"},
-    "persistence": {"in_memory": False},
-    "dispatch": {"outbox_enabled": False, "nats_mode": "disabled", "temporal_worker_mode": "disabled"},
-    "external_effects": {"LIVE_WRITE": False, "ODOO_WRITE": False, "SEND_EVENTS": False},
-    "production_dialing": "DISABLED",
-    "production_activation_configured": False,
-    "provider_effects_disabled": True,
-    "all_external_effects_disabled": True,
-    "staging_safe": True,
-}).encode()
+def safety_document() -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "service": "middleware-api",
+        "environment": "staging",
+        "runtime_profile_id": "codestra-middleware-staging-v1",
+        "release": {
+            "source_sha": SOURCE,
+            "image_digest": DIGEST,
+            "schema_head": "0003_immutable_event_ledger",
+            "build_time": "2026-08-30T13:24:37Z",
+        },
+        "persistence": {"in_memory": False},
+        "dispatch": {"outbox_enabled": False, "nats_mode": "disabled", "temporal_worker_mode": "disabled"},
+        "external_effects": {name: False for name in collector.EXPECTED_EXTERNAL_EFFECT_KEYS},
+        "production_dialing": "DISABLED",
+        "production_activation_configured": False,
+        "provider_effects_disabled": True,
+        "all_external_effects_disabled": True,
+        "staging_safe": True,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -83,7 +92,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(SAFETY)
+            self.wfile.write(json.dumps(safety_document()).encode())
             return
         self.send_response(404)
         self.end_headers()
@@ -96,6 +105,27 @@ class CollectorTests(unittest.TestCase):
         bad = metrics_payload() + b'intake_inbox_backlog{codestra_business="platform",application="integration",service="middleware-api",environment="staging",customer_id="123"} 1\n'
         with self.assertRaises(collector.EvidenceError):
             collector.analyze_metrics(bad, max_series=5000, max_family_series=500)
+
+    def test_identity_labels_are_format_checked_and_scanned(self):
+        bad = metrics_payload() + b'codestra_release_info{service="middleware-api",component="api",environment="staging",release_sha="operator@example.invalid",image_digest="sha256:695fa3ce3f50ba4d0ae0784976b946a0a683ca731155e4bd3bd9e90a4670b820",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"} 1\n'
+        with self.assertRaises(collector.EvidenceError):
+            collector.analyze_metrics(bad, max_series=5000, max_family_series=500)
+
+    def test_runtime_safety_rejects_empty_or_unknown_evidence(self):
+        empty = safety_document()
+        empty["external_effects"] = {}
+        with self.assertRaises(collector.EvidenceError):
+            collector.validate_runtime_safety(json.dumps(empty).encode(), SOURCE, DIGEST)
+        unknown = safety_document()
+        unknown["diagnostic"] = {"credential": "must-not-be-persisted"}
+        with self.assertRaises(collector.EvidenceError):
+            collector.validate_runtime_safety(json.dumps(unknown).encode(), SOURCE, DIGEST)
+
+    def test_runtime_safety_returns_allowlisted_projection(self):
+        projected = collector.validate_runtime_safety(json.dumps(safety_document()).encode(), SOURCE, DIGEST)
+        self.assertEqual(set(projected), collector.EXPECTED_RUNTIME_SAFETY_KEYS)
+        self.assertEqual(set(projected["external_effects"]), collector.EXPECTED_EXTERNAL_EFFECT_KEYS)
+        self.assertTrue(all(value is False for value in projected["external_effects"].values()))
 
     def test_full_get_only_evidence_collection(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -127,10 +157,13 @@ class CollectorTests(unittest.TestCase):
                     self.assertEqual(collector.main(), 0)
                 finally:
                     __import__("sys").argv = old
-                evidence = json.loads(output.read_text())
+                evidence_text = output.read_text()
+                evidence = json.loads(evidence_text)
                 self.assertEqual(evidence["overall_result"], "PASS")
                 self.assertEqual(evidence["target"]["methods_used"], ["GET"])
-                self.assertNotIn(Handler.metrics_token, output.read_text())
+                self.assertNotIn(Handler.metrics_token, evidence_text)
+                self.assertNotIn(Handler.health_token, evidence_text)
+                self.assertEqual(set(evidence["runtime_safety"]), collector.EXPECTED_RUNTIME_SAFETY_KEYS)
                 self.assertTrue(checksum.read_text().startswith("sha256:"))
         finally:
             server.shutdown()
