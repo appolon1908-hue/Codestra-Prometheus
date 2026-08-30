@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1.0",
+  "status": "CONTRACT_PREPARED_NOT_DEPLOYED",
+  "domain": "codestra-marketing-platform",
+  "services": ["kong","keycloak","middleware","marketing","ai","communication","social-control","social-runtime","n8n","odoo"],
+  "safeDimensions": ["codestra_business","application","service","environment","server","region","deployment","channel","provider","result","reason"],
+  "forbiddenLabelsOrPayloads": ["tenant_id","campaign_id","lead_id","customer_id","user_id","email","phone","name","address","message","prompt","response_body","access_token","refresh_token","client_secret","idempotency_key","correlation_id","trace_id","span_id","raw_url","query_string"],
+  "rawMetrics": ["http_requests_total","http_request_duration_seconds","service_errors_total","middleware_inbox_backlog","middleware_outbox_backlog","middleware_dead_letter_total","marketing_sync_total","marketing_sync_failures_total","communication_dry_run_total","social_reconciliation_total","social_publish_blocked_total","n8n_workflow_failures_total","odoo_sync_total","ai_requests_total","ai_request_failures_total"],
+  "alerts": ["service_unavailable","elevated_5xx","latency_slo_breach","middleware_queue_stalled","dead_letter_growth","database_unavailable","gateway_unavailable","identity_unavailable","reconciliation_failure","dangerous_capability_enabled"],
+  "activation": {"runtimeApplied": false,"productionTargetsEnabled": false,"externalWritesEnabled": false}
+}
