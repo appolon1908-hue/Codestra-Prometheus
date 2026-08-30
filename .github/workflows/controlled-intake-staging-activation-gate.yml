@@ -1,0 +1,138 @@
+name: Controlled intake staging activation preparation gate
+
+on:
+  pull_request:
+    paths:
+      - "integration/staging-activation-contract-v1.json"
+      - ".github/workflows/controlled-intake-staging-activation-gate.yml"
+  workflow_dispatch:
+    inputs:
+      execution_reason:
+        description: "Why is this integration being executed?"
+        required: true
+        type: string
+      change_id:
+        description: "Approved staging certification identifier"
+        required: true
+        type: string
+      expected_branch_head:
+        description: "Exact 40-character branch SHA being certified"
+        required: true
+        type: string
+      middleware_image_digest:
+        description: "Verified immutable Middleware digest: sha256:<64 hex>"
+        required: true
+        type: string
+      staging_evidence_checksum:
+        description: "Passing evidence checksum: sha256:<64 hex>"
+        required: true
+        type: string
+      confirm_prometheus_only:
+        description: "Only the approved Prometheus target may later move pending to active"
+        required: true
+        type: boolean
+      confirm_blackbox_pending:
+        description: "Blackbox remains pending until independent probe review"
+        required: true
+        type: boolean
+      confirm_no_external_effects:
+        description: "No external effect or production mutation is authorized"
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: controlled-intake-staging-activation-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-preparation-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Validate exact-SHA, token and activation contract
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          data = json.loads(Path("integration/staging-activation-contract-v1.json").read_text())
+          assert data["schema_version"] == "1.0"
+          assert data["suite_id"] == "codestra-controlled-intake-monitoring-v1"
+          assert data["repository"] == os.environ["GITHUB_REPOSITORY"]
+          assert data["execution_question"] == "Why is this integration being executed?"
+          assert data["execution_reason_required"] is True and data["source_only_preparation"] is True
+          source = data["middleware_source_authority"]
+          assert source["repository"] == "appolon1908-hue/Middleware-"
+          assert re.fullmatch(r"[0-9a-f]{40}", source["source_sha"])
+          assert source["immutable_image_digest"] is None
+          assert source["image_digest_state"] == "PENDING_VERIFIED_IMMUTABLE_BUILD"
+          endpoints = {(item["method"], item["path"], item["scope"]) for item in data["private_endpoints"]}
+          assert ("GET", "/metrics", "metrics.read") in endpoints
+          assert ("GET", "/v1/runtime/safety", "health.read") in endpoints
+          assert all(item["client_id"] == "monitoring-readonly" and item["public_exposure"] is False for item in data["private_endpoints"])
+          credentials = data["staging_credentials"]
+          assert credentials["storage"] == "OUTSIDE_GIT"
+          assert credentials["static_tokens_allowed"] is False and credentials["secret_values_committed"] is False
+          assert 60 <= credentials["minimum_token_ttl_seconds"] <= credentials["maximum_token_ttl_seconds"] <= 900
+          evidence = data["staging_evidence"]
+          assert evidence["collector_repository"] == "appolon1908-hue/Codestra-Prometheus"
+          assert evidence["checksum"] is None and evidence["state"] == "PENDING_RUNTIME_EXECUTION"
+          policy = data["activation_policy"]
+          assert policy["prometheus_target_current_state"] == "pending"
+          assert policy["prometheus_target_allowed_next_state"] == "active"
+          assert policy["only_prometheus_target_may_transition"] is True
+          assert policy["prometheus_activation_pr_required"] is True
+          assert policy["prometheus_activation_pr_must_cite_image_digest"] is True
+          assert policy["prometheus_activation_pr_must_cite_evidence_checksum"] is True
+          assert policy["blackbox_target_current_state"] == "pending"
+          assert policy["blackbox_must_remain_pending"] is True
+          assert policy["blackbox_activation_requires_independent_review"] is True
+          assert policy["blackbox_probe_must_be_side_effect_free"] is True
+          assert policy["blackbox_allowed_methods"] == ["GET", "HEAD"]
+          assert policy["production_activation_authorized"] is False
+          assert all(value is False for value in data["runtime_effects"].values())
+          print("CONTROLLED_STAGING_ACTIVATION_PREPARATION=PASS")
+          PY
+
+  verify-execution-evidence-inputs:
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate-preparation-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXECUTION_REASON: ${{ inputs.execution_reason }}
+      CHANGE_ID: ${{ inputs.change_id }}
+      EXPECTED_BRANCH_HEAD: ${{ inputs.expected_branch_head }}
+      MIDDLEWARE_IMAGE_DIGEST: ${{ inputs.middleware_image_digest }}
+      STAGING_EVIDENCE_CHECKSUM: ${{ inputs.staging_evidence_checksum }}
+      CONFIRM_PROMETHEUS_ONLY: ${{ inputs.confirm_prometheus_only }}
+      CONFIRM_BLACKBOX_PENDING: ${{ inputs.confirm_blackbox_pending }}
+      CONFIRM_NO_EXTERNAL_EFFECTS: ${{ inputs.confirm_no_external_effects }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify immutable digest and evidence references
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          reason = " ".join(os.environ["EXECUTION_REASON"].split())
+          if len(reason) < 40: raise SystemExit("execution_reason must explain the operational need")
+          if not re.fullmatch(r"CHG-[A-Z0-9][A-Z0-9._-]{7,}", os.environ["CHANGE_ID"].strip().upper()): raise SystemExit("change_id must use CHG-* format")
+          expected = os.environ["EXPECTED_BRANCH_HEAD"].strip().lower()
+          if not re.fullmatch(r"[0-9a-f]{40}", expected): raise SystemExit("expected_branch_head must be a full SHA")
+          actual = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if actual != expected: raise SystemExit(f"exact-head mismatch: expected {expected}, checked out {actual}")
+          pattern = r"sha256:[0-9a-f]{64}"
+          image = os.environ["MIDDLEWARE_IMAGE_DIGEST"].strip().lower()
+          evidence = os.environ["STAGING_EVIDENCE_CHECKSUM"].strip().lower()
+          if not re.fullmatch(pattern, image) or not re.fullmatch(pattern, evidence): raise SystemExit("digest/checksum must use sha256:<64 lowercase hex>")
+          for name in ("CONFIRM_PROMETHEUS_ONLY", "CONFIRM_BLACKBOX_PENDING", "CONFIRM_NO_EXTERNAL_EFFECTS"):
+              if os.environ[name].lower() != "true": raise SystemExit(f"{name.lower()} confirmation is required")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Controlled staging activation evidence check\n")
+              summary.write(f"- Why executed: {reason}\n- Exact branch head: `{actual}`\n- Middleware image: `{image}`\n- Evidence checksum: `{evidence}`\n")
+              summary.write("- Prometheus activation: **separate PR required**\n- Blackbox: **pending**\n- Deployment performed by this workflow: **No**\n")
+          print("CONTROLLED_STAGING_EVIDENCE_REFERENCES=PASS")
+          PY
