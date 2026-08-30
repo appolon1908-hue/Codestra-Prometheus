@@ -56,7 +56,9 @@ jobs:
       - name: Validate signed immutable Middleware release lock
         run: |
           python3 - <<'PY'
-          import json, os, re
+          import json
+          import os
+          import re
           from pathlib import Path
 
           data = json.loads(Path("integration/staging-activation-contract-v1.json").read_text())
@@ -99,12 +101,18 @@ jobs:
           }
           for key, value in expected.items():
               assert source[key] == value, (key, source.get(key), value)
-          for key in ("immutable_image_digest", "signed_release_artifact_sha256", "sbom_sha256", "vulnerability_report_sha256"):
-              assert re.fullmatch(r"sha256:[0-9a-f]{64}", source[key])
+          hash_keys = ("immutable_image_digest", "signed_release_artifact_sha256", "sbom_sha256", "vulnerability_report_sha256")
+          assert all(re.fullmatch(r"sha256:[0-9a-f]{64}", source[key]) for key in hash_keys)
 
-          endpoints = {(x["method"], x["path"], x["client_id"], x["scope"], x["public_exposure"]) for x in data["private_endpoints"]}
-          assert ("GET", "/metrics", "monitoring-readonly", "metrics.read", False) in endpoints
-          assert ("GET", "/v1/runtime/safety", "monitoring-readonly", "health.read", False) in endpoints
+          declared = data["private_endpoints"]
+          allowed = {
+              ("GET", "/metrics", "monitoring-readonly", "metrics.read", False),
+              ("GET", "/v1/runtime/safety", "monitoring-readonly", "health.read", False),
+          }
+          actual = {(item["method"], item["path"], item["client_id"], item["scope"], item["public_exposure"]) for item in declared}
+          assert len(declared) == len(allowed)
+          assert actual == allowed
+          assert all(item["method"] == "GET" and item["client_id"] == "monitoring-readonly" and item["public_exposure"] is False for item in declared)
 
           credentials = data["staging_credentials"]
           assert credentials["storage"] == "OUTSIDE_GIT"
@@ -130,6 +138,8 @@ jobs:
           assert policy["blackbox_activation_requires_independent_review"] is True
           assert policy["blackbox_probe_must_be_side_effect_free"] is True
           assert policy["blackbox_allowed_methods"] == ["GET", "HEAD"]
+          if data["component"] == "blackbox_exporter":
+              assert policy["blackbox_allowed_status"] == "PENDING_ONLY"
           assert policy["production_activation_authorized"] is False
           assert all(value is False for value in data["runtime_effects"].values())
           print("CONTROLLED_STAGING_IMMUTABLE_DIGEST_LOCK=PASS")
@@ -154,7 +164,10 @@ jobs:
       - name: Verify runtime evidence references
         run: |
           python3 - <<'PY'
-          import json, os, re, subprocess
+          import json
+          import os
+          import re
+          import subprocess
           from pathlib import Path
 
           reason = " ".join(os.environ["EXECUTION_REASON"].split())
@@ -162,7 +175,6 @@ jobs:
               raise SystemExit("execution_reason must explain the operational need")
           if not re.fullmatch(r"CHG-[A-Z0-9][A-Z0-9._-]{7,}", os.environ["CHANGE_ID"].strip().upper()):
               raise SystemExit("change_id must use CHG-* format")
-
           expected_head = os.environ["EXPECTED_BRANCH_HEAD"].strip().lower()
           actual_head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           if not re.fullmatch(r"[0-9a-f]{40}", expected_head) or actual_head != expected_head:
@@ -176,8 +188,9 @@ jobs:
               raise SystemExit("image digest must exactly match the contract lock")
           if not re.fullmatch(pattern, evidence):
               raise SystemExit("runtime evidence checksum must use sha256:<64 lowercase hex>")
-          if evidence == source["signed_release_artifact_sha256"]:
-              raise SystemExit("runtime evidence must not reuse the release-artifact checksum")
+          forbidden_evidence = {source["immutable_image_digest"], source["signed_release_artifact_sha256"], source["sbom_sha256"], source["vulnerability_report_sha256"]}
+          if evidence in forbidden_evidence:
+              raise SystemExit("runtime evidence must differ from every release or image checksum")
           for name in ("CONFIRM_PROMETHEUS_ONLY", "CONFIRM_BLACKBOX_PENDING", "CONFIRM_NO_EXTERNAL_EFFECTS"):
               if os.environ[name].lower() != "true":
                   raise SystemExit(f"{name.lower()} confirmation is required")
