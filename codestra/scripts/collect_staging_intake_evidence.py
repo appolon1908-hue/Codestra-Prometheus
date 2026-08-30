@@ -2,8 +2,8 @@
 """Collect fail-closed staging evidence for the private Middleware metrics boundary.
 
 The collector never writes business data. It performs GET requests only, never
-prints bearer tokens, and writes a canonical JSON evidence document plus its
-SHA-256 checksum.
+prints bearer tokens, and writes a canonical allowlisted JSON evidence document
+plus its SHA-256 checksum.
 """
 from __future__ import annotations
 
@@ -50,11 +50,61 @@ EXPECTED_METRIC_FAMILIES = {
     "intake_spam_rejections",
 }
 
+EXPECTED_EXTERNAL_EFFECT_KEYS = {
+    "SEND_EVENTS",
+    "ENABLE_EXTERNAL_DELIVERY",
+    "LIVE_WRITE",
+    "LIVE_WRITES",
+    "ODOO_WRITE",
+    "CALLBACK_DISPATCH",
+    "N8N_DELIVERY_ENABLED",
+    "VICIDIAL_WRITES_ENABLED",
+    "EXTERNAL_DIAL_ENABLED",
+    "PRODUCTION_CALLBACKS_ENABLED",
+    "N8N_PRODUCTION_WORKFLOWS_ENABLED",
+    "FORM_ODOO_DELIVERY_ENABLED",
+    "CRAWLER_ODOO_DELIVERY_ENABLED",
+    "SCRAPPER_ODOO_DELIVERY_ENABLED",
+    "CRAWLER_EXTERNAL_CONTACT_ENABLED",
+    "SCRAPPER_EXTERNAL_CONTACT_ENABLED",
+    "SMS_DELIVERY_ENABLED",
+    "EMAIL_DELIVERY_ENABLED",
+    "SOCIAL_DELIVERY_ENABLED",
+    "CRAWLER_EXECUTION_ENABLED",
+    "SCRAPPER_EXECUTION_ENABLED",
+    "LIVE_SMS_DELIVERY",
+    "LIVE_EMAIL_DELIVERY",
+    "UNRESTRICTED_CRAWLING",
+}
+
+EXPECTED_RUNTIME_SAFETY_KEYS = {
+    "schema_version",
+    "service",
+    "environment",
+    "runtime_profile_id",
+    "release",
+    "persistence",
+    "dispatch",
+    "external_effects",
+    "production_dialing",
+    "production_activation_configured",
+    "provider_effects_disabled",
+    "all_external_effects_disabled",
+    "staging_safe",
+}
+
 ALLOWED_LABEL_NAMES = {
     "codestra_business", "application", "service", "component", "environment",
     "operation", "method", "status", "dependency", "release_sha", "image_digest",
     "schema_or_migration_head", "version", "channel", "form_kind", "result",
     "reason", "survey_kind", "anonymous", "delivery_target", "queue", "le", "quantile",
+}
+
+IDENTITY_LABEL_PATTERNS = {
+    "release_sha": re.compile(r"[0-9a-f]{40}"),
+    "image_digest": re.compile(r"sha256:[0-9a-f]{64}"),
+    "schema_or_migration_head": re.compile(r"[0-9]{4}_[a-z0-9_]{3,96}"),
+    "version": re.compile(r"[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9._-]+)?"),
 }
 
 FORBIDDEN_LABEL_RE = re.compile(
@@ -275,8 +325,9 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
         for label_name, value in labels.items():
             if len(value) > 256:
                 raise EvidenceError(f"metric label value too long: {label_name}")
-            if label_name in {"release_sha", "image_digest", "schema_or_migration_head", "version"}:
-                continue
+            identity_pattern = IDENTITY_LABEL_PATTERNS.get(label_name)
+            if identity_pattern is not None and identity_pattern.fullmatch(value) is None:
+                raise EvidenceError(f"metric identity label has invalid format: {label_name}")
             for pattern in SENSITIVE_VALUE_PATTERNS:
                 if pattern.search(value):
                     privacy_findings.append(f"{family}:{label_name}")
@@ -315,33 +366,67 @@ def validate_runtime_safety(payload: bytes, expected_source: str, expected_diges
         data = json.loads(payload)
     except json.JSONDecodeError as exc:
         raise EvidenceError("runtime-safety response is not JSON") from exc
-    if data.get("environment") != "staging":
+    if not isinstance(data, dict) or set(data) != EXPECTED_RUNTIME_SAFETY_KEYS:
+        raise EvidenceError("runtime-safety response contains missing or unexpected fields")
+    if data["schema_version"] != "1.0" or data["service"] != "middleware-api":
+        raise EvidenceError("runtime-safety identity is invalid")
+    if data["environment"] != "staging":
         raise EvidenceError("runtime environment is not staging")
-    release = data.get("release") or {}
-    if release.get("source_sha") != expected_source:
+    if data["runtime_profile_id"] != "codestra-middleware-staging-v1":
+        raise EvidenceError("runtime profile does not match the immutable image")
+
+    release = data["release"]
+    if not isinstance(release, dict) or set(release) != {"source_sha", "image_digest", "schema_head", "build_time"}:
+        raise EvidenceError("runtime release evidence shape is invalid")
+    if release["source_sha"] != expected_source:
         raise EvidenceError("runtime source SHA does not match immutable release")
-    if release.get("image_digest") != expected_digest:
+    if release["image_digest"] != expected_digest:
         raise EvidenceError("runtime image digest does not match immutable release")
-    if release.get("schema_head") != "0003_immutable_event_ledger":
+    if release["schema_head"] != "0003_immutable_event_ledger":
         raise EvidenceError("runtime schema head is not certified")
-    if (data.get("persistence") or {}).get("in_memory") is not False:
+    if not isinstance(release["build_time"], str) or not release["build_time"].strip():
+        raise EvidenceError("runtime build time is missing")
+
+    persistence = data["persistence"]
+    if persistence != {"in_memory": False}:
         raise EvidenceError("in-memory persistence is prohibited in staging")
-    dispatch = data.get("dispatch") or {}
-    if dispatch.get("outbox_enabled") is not False:
-        raise EvidenceError("outbox dispatch must remain disabled")
-    if dispatch.get("nats_mode") != "disabled" or dispatch.get("temporal_worker_mode") != "disabled":
-        raise EvidenceError("NATS and Temporal dispatch must remain disabled")
-    effects = data.get("external_effects")
-    if not isinstance(effects, dict) or any(value is not False for value in effects.values()):
+    dispatch = data["dispatch"]
+    if dispatch != {"outbox_enabled": False, "nats_mode": "disabled", "temporal_worker_mode": "disabled"}:
+        raise EvidenceError("dispatch controls are not fully disabled")
+
+    effects = data["external_effects"]
+    if not isinstance(effects, dict) or set(effects) != EXPECTED_EXTERNAL_EFFECT_KEYS:
+        raise EvidenceError("external-effects evidence is empty or incomplete")
+    if any(value is not False for value in effects.values()):
         raise EvidenceError("one or more external effects are enabled")
-    if data.get("production_dialing") != "DISABLED":
+    if data["production_dialing"] != "DISABLED":
         raise EvidenceError("production dialing is not disabled")
-    if data.get("production_activation_configured") is not False:
+    if data["production_activation_configured"] is not False:
         raise EvidenceError("production activation must not be configured")
     for key in ("provider_effects_disabled", "all_external_effects_disabled", "staging_safe"):
-        if data.get(key) is not True:
+        if data[key] is not True:
             raise EvidenceError(f"runtime safety flag is not true: {key}")
-    return data
+
+    return {
+        "schema_version": data["schema_version"],
+        "service": data["service"],
+        "environment": data["environment"],
+        "runtime_profile_id": data["runtime_profile_id"],
+        "release": {
+            "source_sha": release["source_sha"],
+            "image_digest": release["image_digest"],
+            "schema_head": release["schema_head"],
+            "build_time": release["build_time"],
+        },
+        "persistence": {"in_memory": False},
+        "dispatch": {"outbox_enabled": False, "nats_mode": "disabled", "temporal_worker_mode": "disabled"},
+        "external_effects": {name: False for name in sorted(EXPECTED_EXTERNAL_EFFECT_KEYS)},
+        "production_dialing": "DISABLED",
+        "production_activation_configured": False,
+        "provider_effects_disabled": True,
+        "all_external_effects_disabled": True,
+        "staging_safe": True,
+    }
 
 
 def canonical_write(path: Path, data: dict[str, Any]) -> str:
