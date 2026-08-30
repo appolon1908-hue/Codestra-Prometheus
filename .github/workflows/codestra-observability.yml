@@ -101,6 +101,9 @@ jobs:
       - name: Validate Prometheus rules
         run: .bin/promtool check rules codestra/prometheus/rules/*.yml
 
+      - name: Execute Stage 6 alert evaluations
+        run: .bin/promtool test rules codestra/prometheus/tests/*.test.yml
+
       - name: Confirm source-only safety state
         run: |
           test "$(python -c 'import json; print(json.load(open("codestra/enterprise-profile.v1.json"))["status"])')" = "CONFIG_PREPARED_NOT_DEPLOYED"
