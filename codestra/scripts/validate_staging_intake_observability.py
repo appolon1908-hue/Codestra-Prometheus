@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -13,9 +14,35 @@ EXPECTED_SOURCE = "f6748a58f8d2590520a4f28776770957061cdea1"
 EXPECTED_DIGEST = "sha256:695fa3ce3f50ba4d0ae0784976b946a0a683ca731155e4bd3bd9e90a4670b820"
 STAGING_TOKEN_URL = "https://auth-staging.codestra.co/realms/codestra/protocol/openid-connect/token"
 PRODUCTION_TOKEN_URL = "https://auth.codestra.co/realms/codestra/protocol/openid-connect/token"
+TARGETS_PATH = CODESTRA / "prometheus/targets/staging.json"
 
 
-def main() -> None:
+def validate_reviewed_git_evidence(contract: dict[str, object]) -> None:
+    evidence = contract["reviewed_git_activation_evidence"]
+    assert isinstance(evidence, dict)
+    assert evidence["schema_version"] == "1.0"
+    assert evidence["evidence_type"] == "REVIEWED_GIT_AUTHORITY"
+    assert evidence["authority_path"] == "integration/staging-activation-contract-v1.json"
+    assert evidence["middleware_source_sha"] == EXPECTED_SOURCE
+    assert evidence["middleware_image_digest"] == EXPECTED_DIGEST
+    assert evidence["migration"] == "0003_immutable_event_ledger"
+    assert evidence["staging_identity"] == "https://auth-staging.codestra.co"
+    assert evidence["production_identity_enabled"] is False
+    assert evidence["external_effects_enabled"] is False
+    assert evidence["blackbox_activation"] == "pending"
+    assert evidence["production_activation_authorized"] is False
+    assert evidence["scope"] == "SOURCE_ONLY_ACTIVATION_ELIGIBILITY_NO_RUNTIME_EFFECT"
+    expected_checksum = evidence["authority_payload_sha256"]
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", expected_checksum)
+    payload = {key: value for key, value in evidence.items() if key != "authority_payload_sha256"}
+    actual_checksum = "sha256:" + hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert actual_checksum == expected_checksum
+
+
+def validate(expected_activation: str = "pending") -> None:
+    assert expected_activation in {"pending", "active"}
     config = yaml.safe_load((CODESTRA / "prometheus/prometheus-staging.yml").read_text())
     jobs = {item["job_name"]: item for item in config["scrape_configs"]}
     assert set(jobs) == {"prometheus-staging", "middleware-intake-staging"}
@@ -41,11 +68,11 @@ def main() -> None:
         ("tenant_scope",): ("aggregate", "keep"),
     }
 
-    targets = json.loads((CODESTRA / "prometheus/targets/staging.json").read_text())
+    targets = json.loads(TARGETS_PATH.read_text())
     assert len(targets) == 1
     assert targets[0]["targets"] == ["middleware-intake-staging:8080"]
     labels = targets[0]["labels"]
-    assert labels["activation"] == "pending"
+    assert labels["activation"] == expected_activation
     assert labels["environment"] == "staging"
     assert labels["tenant_scope"] == "aggregate"
     assert labels["service"] == "middleware-intake"
@@ -67,6 +94,7 @@ def main() -> None:
         == "pending"
     )
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", EXPECTED_DIGEST)
+    validate_reviewed_git_evidence(contract)
 
     collector = (CODESTRA / "scripts/collect_staging_intake_evidence.py").read_text()
     wrapper = (
@@ -93,7 +121,12 @@ def main() -> None:
     workflow = (REPO / ".github/workflows/stage6-intake-observability.yml").read_text()
     assert "collect_staging_intake_evidence_v2.py" in workflow
     assert "test_collect_staging_intake_evidence*.py" in workflow
-    print("STAGING_INTAKE_OBSERVABILITY_SOURCE=PASS")
+
+
+def main() -> None:
+    validate("pending")
+    print("PROMETHEUS_SOURCE_GATE=PASS")
+    print("BLACKBOX_ACTIVATION_GATE=NOT_YET_REQUIRED")
 
 
 if __name__ == "__main__":
