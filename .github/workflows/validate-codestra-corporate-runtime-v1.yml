@@ -1,0 +1,110 @@
+name: Validate Codestra Prometheus corporate runtime v1
+
+on:
+  pull_request:
+    paths:
+      - "codestra/runtime-v1/**"
+      - "upstream/**"
+      - ".github/workflows/validate-codestra-corporate-runtime-v1.yml"
+  push:
+    branches:
+      - development
+      - test
+      - staging
+      - production
+      - main
+    paths:
+      - "codestra/runtime-v1/**"
+      - "upstream/**"
+      - ".github/workflows/validate-codestra-corporate-runtime-v1.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: upstream/go.mod
+          cache-dependency-path: upstream/go.sum
+      - name: Build promtool from the exact vendored Prometheus source
+        working-directory: upstream
+        run: go build -trimpath -o ../.tmp-promtool ./cmd/promtool
+      - name: Validate corporate recording and alert rules
+        run: |
+          ./.tmp-promtool check rules codestra/runtime-v1/codestra-corporate-recording-rules.yml
+          ./.tmp-promtool check rules codestra/runtime-v1/codestra-corporate-alerts.yml
+      - name: Install pinned YAML parser
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
+      - name: Validate portfolio, labels, and alert metadata
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import yaml
+
+          root = Path("codestra/runtime-v1")
+          portfolio = json.loads((root / "portfolio-services.json").read_text())
+          recording_text = (root / "codestra-corporate-recording-rules.yml").read_text()
+          alerts_text = (root / "codestra-corporate-alerts.yml").read_text()
+          recording = yaml.safe_load(recording_text)
+          alerts = yaml.safe_load(alerts_text)
+
+          required_businesses = {
+              "codestra", "moneybee", "beyvra", "breero", "larim-a",
+              "transportation", "booked4seasons", "social", "klyrow",
+              "telnexa", "kyqra", "restaurant", "provisioning",
+          }
+          required_services = {
+              "prometheus", "loki", "grafana", "tempo",
+              "opentelemetry-collector", "alloy", "node-exporter",
+              "cadvisor", "redis-exporter", "blackbox-exporter",
+              "superset", "openbao",
+          }
+          assert set(portfolio["businesses"]) == required_businesses
+          assert set(portfolio["platformServices"]) == required_services
+          assert portfolio["discoveryRules"]["hardCodedCustomerTargetsAllowed"] is False
+          assert portfolio["discoveryRules"]["targetCredentialsInUrlAllowed"] is False
+          assert portfolio["discoveryRules"]["targetsActivatedByPullRequestOnly"] is True
+          assert len(recording["groups"]) >= 5
+          all_alerts = [
+              rule
+              for group in alerts["groups"]
+              for rule in group["rules"]
+              if "alert" in rule
+          ]
+          names = {rule["alert"] for rule in all_alerts}
+          for required in (
+              "CodestraWatchdog", "CodestraTargetDown",
+              "CodestraSLOFastBurn", "CodestraBackupStale",
+              "CodestraRestoreValidationStale", "CodestraConfigurationDrift",
+              "CodestraCertificateExpiringCritical",
+          ):
+              assert required in names
+          restore_alert = next(
+              rule for rule in all_alerts
+              if rule["alert"] == "CodestraRestoreValidationStale"
+          )
+          restore_expr = restore_alert["expr"]
+          assert "codestra_backup_last_success_timestamp_seconds" in restore_expr
+          assert "unless on" in restore_expr
+          assert "codestra_restore_validation_last_success_timestamp_seconds" in restore_expr
+          allowed_severity = {"critical", "high", "warning", "informational"}
+          for rule in all_alerts:
+              labels = rule.get("labels", {})
+              annotations = rule.get("annotations", {})
+              assert labels.get("severity") in allowed_severity, rule["alert"]
+              assert labels.get("owner"), rule["alert"]
+              assert annotations.get("summary"), rule["alert"]
+              assert annotations.get("description"), rule["alert"]
+              assert annotations.get("runbook_url", "").startswith(
+                  "https://github.com/appolon1908-hue/Codestra-Prometheus/"
+              ), rule["alert"]
+          for forbidden in portfolio["forbiddenMetricLabels"]:
+              assert forbidden not in recording_text
+              assert forbidden not in alerts_text
+          assert "broker_signing" not in (recording_text + alerts_text).lower()
+          print("Codestra Prometheus corporate runtime validation PASS")
