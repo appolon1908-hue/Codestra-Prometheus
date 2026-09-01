@@ -65,6 +65,18 @@ class RepositorySecurityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pull_request_validation_must_be_unconditional"):
             VALIDATOR.validate_workflows(unsafe, runtime)
 
+    def test_validation_runs_on_every_persistent_branch_push(self) -> None:
+        expected = ["main", "development", "test", "staging", "production"]
+        paths = (
+            ROOT / ".github/workflows/codestra-observability.yml",
+            ROOT / ".github/workflows/validate-codestra-corporate-runtime-v1.yml",
+        )
+        for path in paths:
+            document = yaml.safe_load(path.read_text())
+            triggers = document.get("on") or document.get(True) or {}
+            self.assertEqual((triggers.get("push") or {}).get("branches"), expected)
+            self.assertIn("pull_request", triggers)
+
     def test_bot_created_sync_pr_dispatches_both_exact_branch_checks(self) -> None:
         self.assertEqual(
             self.sync_document["permissions"],
@@ -152,6 +164,20 @@ class RepositorySecurityTests(unittest.TestCase):
             )
             self.assertGreater(result.returncode, 1)
             self.assertIn("symbolic link", result.stderr)
+
+    def test_repository_tests_are_secret_scanned(self) -> None:
+        scanner = ROOT / "scripts/reject_repository_secrets.sh"
+        source = scanner.read_text()
+        self.assertNotIn('-path "$search_root/tests"', source)
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "tests" / "credentials.yml"
+            fixture.parent.mkdir()
+            fixture.write_text("client_" + "secret: actual-sensitive-value\n")
+            result = subprocess.run(
+                [scanner, directory], check=False, capture_output=True, text=True
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("secret pattern detected", result.stderr)
 
 
 if __name__ == "__main__":

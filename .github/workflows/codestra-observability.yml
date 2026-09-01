@@ -3,7 +3,7 @@ name: Validate Codestra Prometheus corporate authority
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, development, test, staging, production]
   workflow_dispatch:
 
 permissions:

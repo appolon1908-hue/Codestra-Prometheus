@@ -8,8 +8,7 @@ trap 'rm -f -- "$path_list"' EXIT
 
 set +e
 find "$search_root" \
-  \( -path "$search_root/.git" -o -path "$search_root/upstream" -o \
-     -path "$search_root/tests" \) -prune -o \
+  \( -path "$search_root/.git" -o -path "$search_root/upstream" \) -prune -o \
   \( -type f -o -type l \) -print0 > "$path_list"
 find_status=$?
 set -e

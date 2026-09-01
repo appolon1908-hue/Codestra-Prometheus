@@ -73,6 +73,14 @@ def validate_sync(source: str, document: dict) -> None:
 
 
 def validate_workflows(authority: str, runtime: str) -> None:
+    persistent_branches = ["main", "development", "test", "staging", "production"]
+    for name, source in (("authority", authority), ("runtime", runtime)):
+        document = yaml.safe_load(source)
+        triggers = document.get("on") or document.get(True) or {}
+        if "pull_request" not in triggers:
+            raise ValueError(f"{name}_pull_request_validation_missing")
+        if (triggers.get("push") or {}).get("branches") != persistent_branches:
+            raise ValueError(f"{name}_persistent_branch_validation_drift")
     combined = authority + "\n" + runtime
     required = (
         "validate-authority:",
@@ -107,6 +115,8 @@ def validate_workflows(authority: str, runtime: str) -> None:
 
 
 def validate_secret_scanner(source: str) -> None:
+    if '-path "$search_root/tests"' in source or "--exclude-dir=tests" in source:
+        raise ValueError("repository_tests_must_be_secret_scanned")
     required = (
         "set -Eeuo pipefail",
         "-type f -o -type l",
