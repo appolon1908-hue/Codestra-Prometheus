@@ -84,6 +84,15 @@ class RepositorySecurityTests(unittest.TestCase):
         self.assertIn('[[ "$vendored_tree" == "$official_tree" ]]', authority)
         self.assertIn('git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"', self.sync_source)
 
+    def test_whitespace_gate_checks_the_committed_base_to_head_range(self) -> None:
+        authority = (ROOT / ".github/workflows/codestra-observability.yml").read_text()
+        self.assertIn("fetch-depth: 0", authority)
+        self.assertIn('base_sha="${{ github.event.pull_request.base.sha }}"', authority)
+        self.assertIn(
+            'git diff --check "$base_sha" "$GITHUB_SHA" -- . \':(exclude)upstream\'',
+            authority,
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
