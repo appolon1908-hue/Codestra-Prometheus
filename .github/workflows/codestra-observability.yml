@@ -46,6 +46,37 @@ jobs:
       - name: Install validator dependency
         run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.3
 
+      - name: Classify an exact upstream-pin bootstrap
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          elif [[ "$GITHUB_EVENT_NAME" == push && "${{ github.event.before }}" =~ ^[0-9a-f]{40}$ && "${{ github.event.before }}" != '0000000000000000000000000000000000000000' ]]; then
+            base_sha="${{ github.event.before }}"
+          else
+            base_sha="$(git rev-parse HEAD^)"
+          fi
+          mapfile -t refs < <(python - <<'PY'
+          import json
+          from pathlib import Path
+          source = json.loads(Path('CODESTRA_UPSTREAM.json').read_text())
+          lock = json.loads(Path('CODESTRA_UPSTREAM_LOCK.json').read_text())
+          print(source.get('upstream_ref', ''))
+          print(lock.get('upstream_commit', ''))
+          PY
+          )
+          pending=0
+          if [[ "${refs[0]}" != "${refs[1]}" ]]; then
+            [[ "$GITHUB_EVENT_NAME" == pull_request || "$GITHUB_EVENT_NAME" == push ]]
+            mapfile -t changed < <(git diff --name-only "$base_sha" "$GITHUB_SHA")
+            (( ${#changed[@]} == 1 ))
+            [[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]
+            pending=1
+          fi
+          echo "PROMETHEUS_PENDING_SYNC=${pending}" >> "$GITHUB_ENV"
+          echo "PROMETHEUS_VALIDATION_BASE_SHA=${base_sha}" >> "$GITHUB_ENV"
+
       - name: Validate Codestra portfolio and immutable runtime inputs
         env:
           PYTHONPYCACHEPREFIX: /tmp/codestra-prometheus-pycache
@@ -56,7 +87,11 @@ jobs:
             scripts/validate_repository_security.py \
             tests/test_repository_security.py
           python tests/test_repository_security.py
-          python scripts/validate_repository_security.py
+          validator_args=()
+          if [[ "$PROMETHEUS_PENDING_SYNC" == 1 ]]; then
+            validator_args+=(--allow-exact-pin-bootstrap)
+          fi
+          python scripts/validate_repository_security.py "${validator_args[@]}"
           python codestra/scripts/validate.py
           python codestra/scripts/validate_runtime_images.py
 
@@ -68,20 +103,30 @@ jobs:
           import json
           from pathlib import Path
           data = json.loads(Path('CODESTRA_UPSTREAM.json').read_text())
+          lock = json.loads(Path('CODESTRA_UPSTREAM_LOCK.json').read_text())
           print(data['upstream_clone_url'])
           print(data['trusted_upstream_ref'])
           print(data['upstream_ref'])
+          print(lock['upstream_commit'])
           print(data['import_path'])
           PY
           )
           upstream_url="${authority[0]}"
           trusted_upstream_ref="${authority[1]}"
           upstream_ref="${authority[2]}"
-          import_path="${authority[3]}"
+          locked_upstream_ref="${authority[3]}"
+          import_path="${authority[4]}"
           [[ "$upstream_url" == 'https://github.com/prometheus/prometheus.git' ]]
           [[ "$trusted_upstream_ref" == 'refs/heads/main' ]]
           [[ "$upstream_ref" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$locked_upstream_ref" =~ ^[0-9a-f]{40}$ ]]
           [[ "$import_path" == upstream ]]
+          validation_ref="$upstream_ref"
+          if [[ "$PROMETHEUS_PENDING_SYNC" == 1 ]]; then
+            validation_ref="$locked_upstream_ref"
+          else
+            [[ "$upstream_ref" == "$locked_upstream_ref" ]]
+          fi
           staging="$(mktemp -d)"
           trap 'rm -rf -- "$staging"' EXIT
           git init --quiet "$staging/source"
@@ -89,8 +134,10 @@ jobs:
           GIT_LFS_SKIP_SMUDGE=1 git -C "$staging/source" fetch --filter=blob:none --no-tags origin "${trusted_upstream_ref}:refs/remotes/origin/codestra-trusted"
           git -C "$staging/source" cat-file -e "${upstream_ref}^{commit}"
           git -C "$staging/source" merge-base --is-ancestor "$upstream_ref" refs/remotes/origin/codestra-trusted
-          git -C "$staging/source" checkout --quiet --detach "$upstream_ref"
-          [[ "$(git -C "$staging/source" rev-parse HEAD)" == "$upstream_ref" ]]
+          git -C "$staging/source" cat-file -e "${validation_ref}^{commit}"
+          git -C "$staging/source" merge-base --is-ancestor "$validation_ref" refs/remotes/origin/codestra-trusted
+          git -C "$staging/source" checkout --quiet --detach "$validation_ref"
+          [[ "$(git -C "$staging/source" rev-parse HEAD)" == "$validation_ref" ]]
           official_tree="$(git -C "$staging/source" rev-parse 'HEAD^{tree}')"
           vendored_tree="$(git rev-parse "HEAD:${import_path}")"
           [[ "$vendored_tree" == "$official_tree" ]] || {

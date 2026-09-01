@@ -26,7 +26,9 @@ class RepositorySecurityTests(unittest.TestCase):
         self.sync_document = yaml.safe_load(self.sync_source)
 
     def test_current_repository_security_contract(self) -> None:
-        VALIDATOR.validate_repository()
+        VALIDATOR.validate_repository(
+            allow_exact_pin_bootstrap=os.environ.get("PROMETHEUS_PENDING_SYNC") == "1"
+        )
 
     def test_mutable_upstream_ref_is_rejected(self) -> None:
         source = json.loads((ROOT / "CODESTRA_UPSTREAM.json").read_text())
@@ -47,6 +49,23 @@ class RepositorySecurityTests(unittest.TestCase):
         ):
             self.assertIn("refs/remotes/origin/codestra-trusted", workflow)
             self.assertIn("merge-base --is-ancestor", workflow)
+
+    def test_exact_pin_only_bootstrap_is_allowed_without_weakening_normal_binding(self) -> None:
+        source = json.loads((ROOT / "CODESTRA_UPSTREAM.json").read_text())
+        lock = json.loads((ROOT / "CODESTRA_UPSTREAM_LOCK.json").read_text())
+        source["upstream_ref"] = "f" * 40
+        with self.assertRaisesRegex(ValueError, "upstream_lock_not_bound"):
+            VALIDATOR.validate_upstream(source, lock)
+        VALIDATOR.validate_upstream(
+            source, lock, allow_exact_pin_bootstrap=True
+        )
+        authority = (ROOT / ".github/workflows/codestra-observability.yml").read_text()
+        for token in (
+            '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
+            'validation_ref="$locked_upstream_ref"',
+            'validator_args+=(--allow-exact-pin-bootstrap)',
+        ):
+            self.assertIn(token, authority)
 
     def test_sync_cannot_push_a_protected_branch(self) -> None:
         VALIDATOR.validate_sync(self.sync_source, self.sync_document)

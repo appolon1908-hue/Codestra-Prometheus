@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from pathlib import Path
@@ -18,7 +19,9 @@ RUNTIME_WORKFLOW = ROOT / ".github/workflows/validate-codestra-corporate-runtime
 SECRET_SCANNER = ROOT / "scripts/reject_repository_secrets.sh"
 
 
-def validate_upstream(source: dict, lock: dict) -> None:
+def validate_upstream(
+    source: dict, lock: dict, *, allow_exact_pin_bootstrap: bool = False
+) -> None:
     expected = {
         "upstream_clone_url": "https://github.com/prometheus/prometheus.git",
         "trusted_upstream_ref": "refs/heads/main",
@@ -31,7 +34,15 @@ def validate_upstream(source: dict, lock: dict) -> None:
     upstream_ref = source.get("upstream_ref")
     if not isinstance(upstream_ref, str) or re.fullmatch(r"[0-9a-f]{40}", upstream_ref) is None:
         raise ValueError("upstream_ref_must_be_exact_commit")
-    if lock.get("upstream_ref") != upstream_ref or lock.get("upstream_commit") != upstream_ref:
+    lock_ref = lock.get("upstream_ref")
+    lock_commit = lock.get("upstream_commit")
+    if (
+        not isinstance(lock_ref, str)
+        or re.fullmatch(r"[0-9a-f]{40}", lock_ref) is None
+        or lock_commit != lock_ref
+    ):
+        raise ValueError("upstream_lock_not_bound_to_exact_ref")
+    if lock_ref != upstream_ref and not allow_exact_pin_bootstrap:
         raise ValueError("upstream_lock_not_bound_to_exact_ref")
 
 
@@ -102,6 +113,11 @@ def validate_workflows(authority: str, runtime: str) -> None:
         '[[ "$vendored_tree" == "$official_tree" ]]',
         'git diff --check "$base_sha" "$GITHUB_SHA" -- . \':(exclude)upstream\'',
         "scripts/reject_repository_secrets.sh .",
+        "Classify an exact upstream-pin bootstrap",
+        "PROMETHEUS_PENDING_SYNC",
+        '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
+        "validator_args+=(--allow-exact-pin-bootstrap)",
+        'validation_ref="$locked_upstream_ref"',
     )
     for token in required:
         if token not in combined:
@@ -135,7 +151,7 @@ def validate_secret_scanner(source: str) -> None:
             raise ValueError(f"secret_scanner_boundary_missing:{token}")
 
 
-def validate_repository() -> None:
+def validate_repository(*, allow_exact_pin_bootstrap: bool = False) -> None:
     paths = (
         UPSTREAM_PATH,
         LOCK_PATH,
@@ -156,7 +172,9 @@ def validate_repository() -> None:
     sync_document = yaml.safe_load(sync_source)
     yaml.safe_load(authority_source)
     yaml.safe_load(runtime_source)
-    validate_upstream(upstream, lock)
+    validate_upstream(
+        upstream, lock, allow_exact_pin_bootstrap=allow_exact_pin_bootstrap
+    )
     validate_sync(sync_source, sync_document)
     validate_workflows(authority_source, runtime_source)
     validate_secret_scanner(secret_scanner_source)
@@ -165,8 +183,13 @@ def validate_repository() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--allow-exact-pin-bootstrap", action="store_true")
+    arguments = parser.parse_args()
     try:
-        validate_repository()
+        validate_repository(
+            allow_exact_pin_bootstrap=arguments.allow_exact_pin_bootstrap
+        )
     except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError) as error:
         raise SystemExit(f"PROMETHEUS_SOURCE_SECURITY=FAIL ERROR={error}") from error
     print("PROMETHEUS_SOURCE_SECURITY=PASS")
