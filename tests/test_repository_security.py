@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -122,6 +123,28 @@ class RepositorySecurityTests(unittest.TestCase):
             "if (( ${#OPEN_PRS[@]} > 1 )); then",
         ):
             self.assertIn(token, self.sync_source)
+
+    def test_sync_branch_distinguishes_completed_runs_but_not_retry_attempts(self) -> None:
+        match = re.search(r'^\s*SYNC_BRANCH="([^"]+)"$', self.sync_source, re.MULTILINE)
+        self.assertIsNotNone(match)
+        template = match.group(1)
+        upstream_sha = "a" * 40
+
+        def render(run_id: str) -> str:
+            return template.replace("${UPSTREAM_SHA}", upstream_sha).replace(
+                "${GITHUB_RUN_ID}", run_id
+            )
+
+        self.assertEqual(render("12345"), render("12345"))
+        self.assertNotEqual(render("12345"), render("12346"))
+        self.assertIn('[[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]', self.sync_source)
+        self.assertNotIn("GITHUB_RUN_ATTEMPT", template)
+
+    def test_generated_sync_commit_has_dco_signoff(self) -> None:
+        self.assertIn(
+            'git commit --signoff -m "vendor: sync official upstream ${UPSTREAM_SHA}"',
+            self.sync_source,
+        )
 
     def test_vendored_tree_is_bound_to_fresh_exact_upstream_commit(self) -> None:
         authority = (ROOT / ".github/workflows/codestra-observability.yml").read_text()

@@ -58,7 +58,8 @@ def validate_sync(source: str, document: dict) -> None:
     required = (
         "[[ \"$UPSTREAM_REF\" =~ ^[0-9a-f]{40}$ ]]",
         "[[ \"$UPSTREAM_SHA\" == \"$UPSTREAM_REF\" ]]",
-        'SYNC_BRANCH="sync/prometheus-upstream-${UPSTREAM_SHA}"',
+        '[[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]',
+        'SYNC_BRANCH="sync/prometheus-upstream-${UPSTREAM_SHA}-${GITHUB_RUN_ID}"',
         'git push origin "HEAD:refs/heads/${SYNC_BRANCH}"',
         "gh pr create",
         'git fetch --depth 1 --no-tags "$UPSTREAM_URL" "$UPSTREAM_SHA"',
@@ -66,6 +67,7 @@ def validate_sync(source: str, document: dict) -> None:
         'git -C .codestra-upstream-src merge-base --is-ancestor "$UPSTREAM_REF" refs/remotes/origin/codestra-trusted',
         "git rm -r --cached --quiet --ignore-unmatch upstream",
         'git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"',
+        'git commit --signoff -m "vendor: sync official upstream ${UPSTREAM_SHA}"',
         "git ls-remote --heads origin",
         '[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]]',
         "gh pr list",

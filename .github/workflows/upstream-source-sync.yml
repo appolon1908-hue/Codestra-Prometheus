@@ -69,14 +69,15 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           export GIT_AUTHOR_DATE="$UPSTREAM_TIMESTAMP"
           export GIT_COMMITTER_DATE="$UPSTREAM_TIMESTAMP"
-          SYNC_BRANCH="sync/prometheus-upstream-${UPSTREAM_SHA}"
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]] || exit 2
+          SYNC_BRANCH="sync/prometheus-upstream-${UPSTREAM_SHA}-${GITHUB_RUN_ID}"
           git switch --create "$SYNC_BRANCH"
           git fetch --depth 1 --no-tags "$UPSTREAM_URL" "$UPSTREAM_SHA"
           git rm -r --cached --quiet --ignore-unmatch upstream
           git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"
           git add CODESTRA_UPSTREAM_LOCK.json
           git diff --cached --quiet && exit 0
-          git commit -m "vendor: sync official upstream ${UPSTREAM_SHA}"
+          git commit --signoff -m "vendor: sync official upstream ${UPSTREAM_SHA}"
           LOCAL_SHA="$(git rev-parse HEAD)"
           REMOTE_SHA="$(git ls-remote --heads origin "refs/heads/${SYNC_BRANCH}" | awk '{print $1}')"
           if [[ -n "$REMOTE_SHA" ]]; then
