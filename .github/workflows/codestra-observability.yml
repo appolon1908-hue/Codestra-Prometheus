@@ -69,22 +69,27 @@ jobs:
           from pathlib import Path
           data = json.loads(Path('CODESTRA_UPSTREAM.json').read_text())
           print(data['upstream_clone_url'])
+          print(data['trusted_upstream_ref'])
           print(data['upstream_ref'])
           print(data['import_path'])
           PY
           )
           upstream_url="${authority[0]}"
-          upstream_ref="${authority[1]}"
-          import_path="${authority[2]}"
+          trusted_upstream_ref="${authority[1]}"
+          upstream_ref="${authority[2]}"
+          import_path="${authority[3]}"
           [[ "$upstream_url" == 'https://github.com/prometheus/prometheus.git' ]]
+          [[ "$trusted_upstream_ref" == 'refs/heads/main' ]]
           [[ "$upstream_ref" =~ ^[0-9a-f]{40}$ ]]
           [[ "$import_path" == upstream ]]
           staging="$(mktemp -d)"
           trap 'rm -rf -- "$staging"' EXIT
           git init --quiet "$staging/source"
           git -C "$staging/source" remote add origin "$upstream_url"
-          GIT_LFS_SKIP_SMUDGE=1 git -C "$staging/source" fetch --depth 1 --no-tags origin "$upstream_ref"
-          git -C "$staging/source" checkout --quiet --detach FETCH_HEAD
+          GIT_LFS_SKIP_SMUDGE=1 git -C "$staging/source" fetch --filter=blob:none --no-tags origin "${trusted_upstream_ref}:refs/remotes/origin/codestra-trusted"
+          git -C "$staging/source" cat-file -e "${upstream_ref}^{commit}"
+          git -C "$staging/source" merge-base --is-ancestor "$upstream_ref" refs/remotes/origin/codestra-trusted
+          git -C "$staging/source" checkout --quiet --detach "$upstream_ref"
           [[ "$(git -C "$staging/source" rev-parse HEAD)" == "$upstream_ref" ]]
           official_tree="$(git -C "$staging/source" rev-parse 'HEAD^{tree}')"
           vendored_tree="$(git rev-parse "HEAD:${import_path}")"
@@ -141,9 +146,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          ! grep -RIlE --exclude-dir=.git --exclude-dir=upstream --exclude-dir=tests \
-            '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._~-]{16,}|client_secret[[:space:]]*=[[:space:]]*[^[:space:]<]+)' \
-            .
+          scripts/reject_repository_secrets.sh .
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             base_sha="${{ github.event.pull_request.base.sha }}"
           elif [[ "$GITHUB_EVENT_NAME" == push && "${{ github.event.before }}" =~ ^[0-9a-f]{40}$ && "${{ github.event.before }}" != '0000000000000000000000000000000000000000' ]]; then

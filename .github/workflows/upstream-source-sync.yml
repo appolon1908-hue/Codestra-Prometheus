@@ -38,29 +38,32 @@ jobs:
           import json
           from pathlib import Path
           data=json.loads(Path('CODESTRA_UPSTREAM.json').read_text())
-          print(data['upstream_clone_url']); print(data['upstream_ref']); print(data['import_path'])
+          print(data['upstream_clone_url']); print(data['trusted_upstream_ref']); print(data['upstream_ref']); print(data['import_path'])
           PY
           )
-          UPSTREAM_URL="${values[0]}"; UPSTREAM_REF="${values[1]}"; IMPORT_PATH="${values[2]}"
+          UPSTREAM_URL="${values[0]}"; TRUSTED_UPSTREAM_REF="${values[1]}"; UPSTREAM_REF="${values[2]}"; IMPORT_PATH="${values[3]}"
           [[ "$UPSTREAM_URL" == "https://github.com/prometheus/prometheus.git" ]] || exit 2
+          [[ "$TRUSTED_UPSTREAM_REF" == "refs/heads/main" ]] || exit 2
           [[ "$UPSTREAM_REF" =~ ^[0-9a-f]{40}$ ]] || exit 2
           [[ "$IMPORT_PATH" == upstream ]] || exit 2
           rm -rf .codestra-upstream-src "$IMPORT_PATH"
           git init --quiet .codestra-upstream-src
           git -C .codestra-upstream-src remote add origin "$UPSTREAM_URL"
-          GIT_LFS_SKIP_SMUDGE=1 git -C .codestra-upstream-src fetch --depth 1 --no-tags origin "$UPSTREAM_REF"
-          git -C .codestra-upstream-src checkout --quiet --detach FETCH_HEAD
+          GIT_LFS_SKIP_SMUDGE=1 git -C .codestra-upstream-src fetch --filter=blob:none --no-tags origin "${TRUSTED_UPSTREAM_REF}:refs/remotes/origin/codestra-trusted"
+          git -C .codestra-upstream-src cat-file -e "${UPSTREAM_REF}^{commit}"
+          git -C .codestra-upstream-src merge-base --is-ancestor "$UPSTREAM_REF" refs/remotes/origin/codestra-trusted
+          git -C .codestra-upstream-src checkout --quiet --detach "$UPSTREAM_REF"
           UPSTREAM_SHA="$(git -C .codestra-upstream-src rev-parse HEAD)"
           [[ "$UPSTREAM_SHA" == "$UPSTREAM_REF" ]] || exit 2
           UPSTREAM_TIMESTAMP="$(git -C .codestra-upstream-src show -s --format=%cI "$UPSTREAM_SHA")"
           rm -rf .codestra-upstream-src/.git
           mv .codestra-upstream-src "$IMPORT_PATH"
-          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA UPSTREAM_TIMESTAMP
+          export UPSTREAM_URL TRUSTED_UPSTREAM_REF UPSTREAM_REF UPSTREAM_SHA UPSTREAM_TIMESTAMP
           python3 - <<'PY'
           import json, os
           from pathlib import Path
           lock_path=Path('CODESTRA_UPSTREAM_LOCK.json')
-          lock_path.write_text(json.dumps({'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':os.environ['UPSTREAM_TIMESTAMP'],'deployment_enabled':False}, indent=2)+'\n')
+          lock_path.write_text(json.dumps({'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'trusted_upstream_ref':os.environ['TRUSTED_UPSTREAM_REF'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':os.environ['UPSTREAM_TIMESTAMP'],'deployment_enabled':False}, indent=2)+'\n')
           PY
           git config user.name 'codestra-upstream-sync'
           git config user.email 'github-actions[bot]@users.noreply.github.com'

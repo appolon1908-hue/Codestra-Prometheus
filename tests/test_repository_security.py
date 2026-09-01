@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -31,6 +34,19 @@ class RepositorySecurityTests(unittest.TestCase):
         source["upstream_ref"] = "main"
         with self.assertRaisesRegex(ValueError, "upstream_ref_must_be_exact_commit"):
             VALIDATOR.validate_upstream(source, lock)
+
+    def test_pinned_commit_must_descend_from_trusted_upstream_ref(self) -> None:
+        source = json.loads((ROOT / "CODESTRA_UPSTREAM.json").read_text())
+        lock = json.loads((ROOT / "CODESTRA_UPSTREAM_LOCK.json").read_text())
+        source["trusted_upstream_ref"] = "refs/pull/1/head"
+        with self.assertRaisesRegex(ValueError, "prometheus_upstream_drift:trusted_upstream_ref"):
+            VALIDATOR.validate_upstream(source, lock)
+        for workflow in (
+            self.sync_source,
+            (ROOT / ".github/workflows/codestra-observability.yml").read_text(),
+        ):
+            self.assertIn("refs/remotes/origin/codestra-trusted", workflow)
+            self.assertIn("merge-base --is-ancestor", workflow)
 
     def test_sync_cannot_push_a_protected_branch(self) -> None:
         VALIDATOR.validate_sync(self.sync_source, self.sync_document)
@@ -78,7 +94,8 @@ class RepositorySecurityTests(unittest.TestCase):
 
     def test_vendored_tree_is_bound_to_fresh_exact_upstream_commit(self) -> None:
         authority = (ROOT / ".github/workflows/codestra-observability.yml").read_text()
-        self.assertIn('fetch --depth 1 --no-tags origin "$upstream_ref"', authority)
+        self.assertIn('fetch --filter=blob:none --no-tags origin "${trusted_upstream_ref}:refs/remotes/origin/codestra-trusted"', authority)
+        self.assertIn('merge-base --is-ancestor "$upstream_ref" refs/remotes/origin/codestra-trusted', authority)
         self.assertIn("rev-parse 'HEAD^{tree}'", authority)
         self.assertIn('git rev-parse "HEAD:${import_path}"', authority)
         self.assertIn('[[ "$vendored_tree" == "$official_tree" ]]', authority)
@@ -92,6 +109,35 @@ class RepositorySecurityTests(unittest.TestCase):
             'git diff --check "$base_sha" "$GITHUB_SHA" -- . \':(exclude)upstream\'',
             authority,
         )
+
+    def test_secret_scanner_rejects_colon_delimited_client_secrets(self) -> None:
+        scanner = ROOT / "scripts/reject_repository_secrets.sh"
+        VALIDATOR.validate_secret_scanner(scanner.read_text())
+        for content in (
+            'client_' + 'secret: actual-sensitive-value\n',
+            '"client_' + 'secret": "actual-sensitive-value"\n',
+        ):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                (Path(directory) / "config.txt").write_text(content)
+                result = subprocess.run(
+                    [scanner, directory], check=False, capture_output=True, text=True
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("secret pattern detected", result.stderr)
+
+    def test_secret_scan_errors_fail_even_when_a_secret_also_matches(self) -> None:
+        scanner = ROOT / "scripts/reject_repository_secrets.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.symlink(root / "missing", root / "dangling")
+            (root / "credential.txt").write_text(
+                "Author" + "ization: " + "Bearer " + "abc/def+ghijklmnopqrstuvwxyz==\n"
+            )
+            result = subprocess.run(
+                [scanner, root], check=False, capture_output=True, text=True
+            )
+            self.assertGreater(result.returncode, 1)
+            self.assertIn("symbolic link", result.stderr)
 
 
 if __name__ == "__main__":

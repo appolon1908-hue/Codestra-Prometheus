@@ -15,11 +15,13 @@ LOCK_PATH = ROOT / "CODESTRA_UPSTREAM_LOCK.json"
 SYNC_PATH = ROOT / ".github/workflows/upstream-source-sync.yml"
 AUTHORITY_WORKFLOW = ROOT / ".github/workflows/codestra-observability.yml"
 RUNTIME_WORKFLOW = ROOT / ".github/workflows/validate-codestra-corporate-runtime-v1.yml"
+SECRET_SCANNER = ROOT / "scripts/reject_repository_secrets.sh"
 
 
 def validate_upstream(source: dict, lock: dict) -> None:
     expected = {
         "upstream_clone_url": "https://github.com/prometheus/prometheus.git",
+        "trusted_upstream_ref": "refs/heads/main",
         "import_path": "upstream",
         "deployment_enabled": False,
     }
@@ -49,6 +51,8 @@ def validate_sync(source: str, document: dict) -> None:
         'git push origin "HEAD:refs/heads/${SYNC_BRANCH}"',
         "gh pr create",
         'git fetch --depth 1 --no-tags "$UPSTREAM_URL" "$UPSTREAM_SHA"',
+        'GIT_LFS_SKIP_SMUDGE=1 git -C .codestra-upstream-src fetch --filter=blob:none --no-tags origin "${TRUSTED_UPSTREAM_REF}:refs/remotes/origin/codestra-trusted"',
+        'git -C .codestra-upstream-src merge-base --is-ancestor "$UPSTREAM_REF" refs/remotes/origin/codestra-trusted',
         "git rm -r --cached --quiet --ignore-unmatch upstream",
         'git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"',
         "git ls-remote --heads origin",
@@ -83,11 +87,13 @@ def validate_workflows(authority: str, runtime: str) -> None:
         "python scripts/validate_repository_security.py",
         "workflow_dispatch:",
         "Bind vendored Git tree to the pinned upstream commit",
-        'GIT_LFS_SKIP_SMUDGE=1 git -C "$staging/source" fetch --depth 1 --no-tags origin "$upstream_ref"',
+        'GIT_LFS_SKIP_SMUDGE=1 git -C "$staging/source" fetch --filter=blob:none --no-tags origin "${trusted_upstream_ref}:refs/remotes/origin/codestra-trusted"',
+        'git -C "$staging/source" merge-base --is-ancestor "$upstream_ref" refs/remotes/origin/codestra-trusted',
         'official_tree="$(git -C "$staging/source" rev-parse \'HEAD^{tree}\')"',
         'vendored_tree="$(git rev-parse "HEAD:${import_path}")"',
         '[[ "$vendored_tree" == "$official_tree" ]]',
         'git diff --check "$base_sha" "$GITHUB_SHA" -- . \':(exclude)upstream\'',
+        "scripts/reject_repository_secrets.sh .",
     )
     for token in required:
         if token not in combined:
@@ -100,8 +106,34 @@ def validate_workflows(authority: str, runtime: str) -> None:
         raise ValueError("whitespace_check_must_use_committed_range")
 
 
+def validate_secret_scanner(source: str) -> None:
+    required = (
+        "set -Eeuo pipefail",
+        "-type f -o -type l",
+        'if [[ -L "$path" ]]',
+        "grep -aEiq",
+        "client_secret",
+        "[[:space:]]*[:=]",
+        "PRIVATE KEY",
+        "Authorization",
+        "Bearer",
+        "secret_scan_status=$?",
+        "Secret scan failed before completing",
+    )
+    for token in required:
+        if token not in source:
+            raise ValueError(f"secret_scanner_boundary_missing:{token}")
+
+
 def validate_repository() -> None:
-    paths = (UPSTREAM_PATH, LOCK_PATH, SYNC_PATH, AUTHORITY_WORKFLOW, RUNTIME_WORKFLOW)
+    paths = (
+        UPSTREAM_PATH,
+        LOCK_PATH,
+        SYNC_PATH,
+        AUTHORITY_WORKFLOW,
+        RUNTIME_WORKFLOW,
+        SECRET_SCANNER,
+    )
     for path in paths:
         if not path.is_file() or path.is_symlink():
             raise ValueError(f"required_regular_file_missing:{path.relative_to(ROOT)}")
@@ -110,12 +142,14 @@ def validate_repository() -> None:
     sync_source = SYNC_PATH.read_text(encoding="utf-8")
     authority_source = AUTHORITY_WORKFLOW.read_text(encoding="utf-8")
     runtime_source = RUNTIME_WORKFLOW.read_text(encoding="utf-8")
+    secret_scanner_source = SECRET_SCANNER.read_text(encoding="utf-8")
     sync_document = yaml.safe_load(sync_source)
     yaml.safe_load(authority_source)
     yaml.safe_load(runtime_source)
     validate_upstream(upstream, lock)
     validate_sync(sync_source, sync_document)
     validate_workflows(authority_source, runtime_source)
+    validate_secret_scanner(secret_scanner_source)
     if (ROOT / "upstream/.git").exists():
         raise ValueError("nested_upstream_git_metadata_forbidden")
 
