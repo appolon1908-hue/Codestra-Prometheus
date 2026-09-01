@@ -188,6 +188,21 @@ class RepositorySecurityTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("secret pattern detected", result.stderr)
 
+    def test_secret_scanner_rejects_camel_case_client_secrets(self) -> None:
+        scanner = ROOT / "scripts/reject_repository_secrets.sh"
+        for content in (
+            "".join(('"client', 'Secret": "actual-sensitive-value"\n')),
+            "".join(("oauthClient", "Secret=actual-sensitive-value\n")),
+            "".join(("client", "secret: actual-sensitive-value\n")),
+        ):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                (Path(directory) / "config.json").write_text(content)
+                result = subprocess.run(
+                    [scanner, directory], check=False, capture_output=True, text=True
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("secret pattern detected", result.stderr)
+
     def test_secret_scanner_rejects_multiline_client_secret_values(self) -> None:
         scanner = ROOT / "scripts/reject_repository_secrets.sh"
         for content in (
