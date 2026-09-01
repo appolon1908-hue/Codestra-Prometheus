@@ -27,7 +27,9 @@ done < "$path_list"
 
 while IFS= read -r -d '' path; do
   set +e
-  LC_ALL=C grep -aEiq "$pattern" -- "$path"
+  # NUL-delimited mode treats an ordinary text file as one record, allowing
+  # YAML/JSON scalar values continued after a newline to remain in scope.
+  LC_ALL=C grep -aEiqz "$pattern" -- "$path"
   secret_scan_status=$?
   set -e
   case "$secret_scan_status" in

@@ -111,7 +111,7 @@ def validate_secret_scanner(source: str) -> None:
         "set -Eeuo pipefail",
         "-type f -o -type l",
         'if [[ -L "$path" ]]',
-        "grep -aEiq",
+        "grep -aEiqz",
         "client_secret",
         "[[:space:]]*[:=]",
         "PRIVATE KEY",

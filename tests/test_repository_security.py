@@ -125,6 +125,20 @@ class RepositorySecurityTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("secret pattern detected", result.stderr)
 
+    def test_secret_scanner_rejects_multiline_client_secret_values(self) -> None:
+        scanner = ROOT / "scripts/reject_repository_secrets.sh"
+        for content in (
+            "client_" + "secret:\n  actual-sensitive-value\n",
+            '"client_' + 'secret":\n  "actual-sensitive-value"\n',
+        ):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                (Path(directory) / "config.yml").write_text(content)
+                result = subprocess.run(
+                    [scanner, directory], check=False, capture_output=True, text=True
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("secret pattern detected", result.stderr)
+
     def test_secret_scan_errors_fail_even_when_a_secret_also_matches(self) -> None:
         scanner = ROOT / "scripts/reject_repository_secrets.sh"
         with tempfile.TemporaryDirectory() as directory:
