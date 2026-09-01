@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -51,39 +52,54 @@ jobs:
           git -C .codestra-upstream-src checkout --quiet --detach FETCH_HEAD
           UPSTREAM_SHA="$(git -C .codestra-upstream-src rev-parse HEAD)"
           [[ "$UPSTREAM_SHA" == "$UPSTREAM_REF" ]] || exit 2
+          UPSTREAM_TIMESTAMP="$(git -C .codestra-upstream-src show -s --format=%cI "$UPSTREAM_SHA")"
           rm -rf .codestra-upstream-src/.git
           mv .codestra-upstream-src "$IMPORT_PATH"
-          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA
+          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA UPSTREAM_TIMESTAMP
           python3 - <<'PY'
           import json, os
-          from datetime import datetime, timezone
           from pathlib import Path
           lock_path=Path('CODESTRA_UPSTREAM_LOCK.json')
-          previous_lock={}
-          if lock_path.is_file():
-              try:
-                  previous_lock=json.loads(lock_path.read_text())
-              except (OSError, ValueError):
-                  previous_lock={}
-          synchronized_at=datetime.now(timezone.utc).isoformat()
-          if (
-              previous_lock.get('upstream_ref') == os.environ['UPSTREAM_REF']
-              and previous_lock.get('upstream_commit') == os.environ['UPSTREAM_SHA']
-          ):
-              synchronized_at=previous_lock.get('synchronized_at', synchronized_at)
-          lock_path.write_text(json.dumps({'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':synchronized_at,'deployment_enabled':False}, indent=2)+'\n')
+          lock_path.write_text(json.dumps({'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':os.environ['UPSTREAM_TIMESTAMP'],'deployment_enabled':False}, indent=2)+'\n')
           PY
           git config user.name 'codestra-upstream-sync'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
+          export GIT_AUTHOR_DATE="$UPSTREAM_TIMESTAMP"
+          export GIT_COMMITTER_DATE="$UPSTREAM_TIMESTAMP"
           SYNC_BRANCH="sync/prometheus-upstream-${UPSTREAM_SHA}"
           git switch --create "$SYNC_BRANCH"
-          git add -A upstream CODESTRA_UPSTREAM_LOCK.json
+          git fetch --depth 1 --no-tags "$UPSTREAM_URL" "$UPSTREAM_SHA"
+          git rm -r --cached --quiet --ignore-unmatch upstream
+          git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"
+          git add CODESTRA_UPSTREAM_LOCK.json
           git diff --cached --quiet && exit 0
           git commit -m "vendor: sync official upstream ${UPSTREAM_SHA}"
-          git push origin "HEAD:refs/heads/${SYNC_BRANCH}"
-          gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --base main \
-            --head "$SYNC_BRANCH" \
-            --title "vendor: sync reviewed Prometheus upstream ${UPSTREAM_SHA}" \
-            --body "Pins and imports the exact Prometheus upstream commit ${UPSTREAM_SHA}. Deployment remains disabled. This PR requires normal source validation and independent review."
+          LOCAL_SHA="$(git rev-parse HEAD)"
+          REMOTE_SHA="$(git ls-remote --heads origin "refs/heads/${SYNC_BRANCH}" | awk '{print $1}')"
+          if [[ -n "$REMOTE_SHA" ]]; then
+            [[ "$REMOTE_SHA" == "$LOCAL_SHA" ]] || {
+              echo "Existing sync branch differs; refusing to replace it." >&2
+              exit 3
+            }
+          else
+            git push origin "HEAD:refs/heads/${SYNC_BRANCH}"
+          fi
+          mapfile -t OPEN_PRS < <(
+            gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+              --head "$SYNC_BRANCH" --json number --jq '.[].number'
+          )
+          if (( ${#OPEN_PRS[@]} > 1 )); then
+            echo "Multiple open synchronization pull requests found." >&2
+            exit 3
+          elif (( ${#OPEN_PRS[@]} == 0 )); then
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base main \
+              --head "$SYNC_BRANCH" \
+              --title "vendor: sync reviewed Prometheus upstream ${UPSTREAM_SHA}" \
+              --body "Pins and imports the exact Prometheus upstream commit ${UPSTREAM_SHA}. Deployment remains disabled. This PR requires normal source validation and independent review."
+          fi
+          gh workflow run codestra-observability.yml \
+            --repo "$GITHUB_REPOSITORY" --ref "$SYNC_BRANCH"
+          gh workflow run validate-codestra-corporate-runtime-v1.yml \
+            --repo "$GITHUB_REPOSITORY" --ref "$SYNC_BRANCH"

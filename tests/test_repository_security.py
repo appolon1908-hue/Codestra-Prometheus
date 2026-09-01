@@ -49,6 +49,41 @@ class RepositorySecurityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pull_request_validation_must_be_unconditional"):
             VALIDATOR.validate_workflows(unsafe, runtime)
 
+    def test_bot_created_sync_pr_dispatches_both_exact_branch_checks(self) -> None:
+        self.assertEqual(
+            self.sync_document["permissions"],
+            {"actions": "write", "contents": "write", "pull-requests": "write"},
+        )
+        self.assertIn("gh workflow run codestra-observability.yml", self.sync_source)
+        self.assertIn("gh workflow run validate-codestra-corporate-runtime-v1.yml", self.sync_source)
+        self.assertEqual(self.sync_source.count('--ref "$SYNC_BRANCH"'), 2)
+        for name in (
+            "codestra-observability.yml",
+            "validate-codestra-corporate-runtime-v1.yml",
+        ):
+            workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
+            triggers = workflow.get("on") or workflow.get(True) or {}
+            self.assertIn("workflow_dispatch", triggers)
+
+    def test_interrupted_sync_retry_reuses_only_identical_branch_and_pr(self) -> None:
+        for token in (
+            'UPSTREAM_TIMESTAMP="$(git -C .codestra-upstream-src show -s --format=%cI "$UPSTREAM_SHA")"',
+            'export GIT_AUTHOR_DATE="$UPSTREAM_TIMESTAMP"',
+            'export GIT_COMMITTER_DATE="$UPSTREAM_TIMESTAMP"',
+            '[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]]',
+            'gh pr list --repo "$GITHUB_REPOSITORY" --state open',
+            "if (( ${#OPEN_PRS[@]} > 1 )); then",
+        ):
+            self.assertIn(token, self.sync_source)
+
+    def test_vendored_tree_is_bound_to_fresh_exact_upstream_commit(self) -> None:
+        authority = (ROOT / ".github/workflows/codestra-observability.yml").read_text()
+        self.assertIn('fetch --depth 1 --no-tags origin "$upstream_ref"', authority)
+        self.assertIn("rev-parse 'HEAD^{tree}'", authority)
+        self.assertIn('git rev-parse "HEAD:${import_path}"', authority)
+        self.assertIn('[[ "$vendored_tree" == "$official_tree" ]]', authority)
+        self.assertIn('git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"', self.sync_source)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

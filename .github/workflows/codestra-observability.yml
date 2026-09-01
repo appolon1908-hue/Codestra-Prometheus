@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -57,6 +58,39 @@ jobs:
           python scripts/validate_repository_security.py
           python codestra/scripts/validate.py
           python codestra/scripts/validate_runtime_images.py
+
+      - name: Bind vendored Git tree to the pinned upstream commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t authority < <(python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('CODESTRA_UPSTREAM.json').read_text())
+          print(data['upstream_clone_url'])
+          print(data['upstream_ref'])
+          print(data['import_path'])
+          PY
+          )
+          upstream_url="${authority[0]}"
+          upstream_ref="${authority[1]}"
+          import_path="${authority[2]}"
+          [[ "$upstream_url" == 'https://github.com/prometheus/prometheus.git' ]]
+          [[ "$upstream_ref" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$import_path" == upstream ]]
+          staging="$(mktemp -d)"
+          trap 'rm -rf -- "$staging"' EXIT
+          git init --quiet "$staging/source"
+          git -C "$staging/source" remote add origin "$upstream_url"
+          GIT_LFS_SKIP_SMUDGE=1 git -C "$staging/source" fetch --depth 1 --no-tags origin "$upstream_ref"
+          git -C "$staging/source" checkout --quiet --detach FETCH_HEAD
+          [[ "$(git -C "$staging/source" rev-parse HEAD)" == "$upstream_ref" ]]
+          official_tree="$(git -C "$staging/source" rev-parse 'HEAD^{tree}')"
+          vendored_tree="$(git rev-parse "HEAD:${import_path}")"
+          [[ "$vendored_tree" == "$official_tree" ]] || {
+            echo 'Vendored Prometheus tree is not the exact pinned upstream tree.' >&2
+            exit 2
+          }
 
       - name: Render hardened runtime candidate
         run: |
