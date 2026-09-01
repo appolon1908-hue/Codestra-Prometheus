@@ -4,7 +4,7 @@
   "codestra_repository": "appolon1908-hue/Codestra-Prometheus",
   "upstream_repository": "prometheus/prometheus",
   "upstream_clone_url": "https://github.com/prometheus/prometheus.git",
-  "upstream_ref": "main",
+  "upstream_ref": "e06b2dc5a6149e20ca82fe936fb044a6dfe45958",
   "import_path": "upstream",
   "import_mode": "shallow-source-snapshot",
   "preserve_upstream_license": true,

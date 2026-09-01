@@ -2,18 +2,8 @@ name: Validate Codestra Prometheus corporate authority
 
 on:
   pull_request:
-    paths:
-      - "codestra/**"
-      - ".github/workflows/codestra-observability.yml"
-      - "upstream/go.mod"
-      - "upstream/go.sum"
   push:
-    branches: [development, test, staging, production, main]
-    paths:
-      - "codestra/**"
-      - ".github/workflows/codestra-observability.yml"
-      - "upstream/go.mod"
-      - "upstream/go.sum"
+    branches: [main]
 
 permissions:
   contents: read
@@ -23,7 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  validate-authority:
+    name: validate-authority
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -41,10 +32,12 @@ jobs:
       POSTGRES_EXPORTER_PASSWORD_SECRET: codestra-postgres-exporter-password
     steps:
       - name: Check out exact head
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.13"
 
@@ -57,7 +50,11 @@ jobs:
         run: |
           python -m py_compile \
             codestra/scripts/validate.py \
-            codestra/scripts/validate_runtime_images.py
+            codestra/scripts/validate_runtime_images.py \
+            scripts/validate_repository_security.py \
+            tests/test_repository_security.py
+          python tests/test_repository_security.py
+          python scripts/validate_repository_security.py
           python codestra/scripts/validate.py
           python codestra/scripts/validate_runtime_images.py
 
@@ -84,7 +81,7 @@ jobs:
             python codestra/scripts/validate_runtime_images.py
 
       - name: Set up Go from locked upstream source
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: upstream/go.mod
           cache-dependency-path: upstream/go.sum
@@ -104,3 +101,12 @@ jobs:
       - name: Confirm source-only safety state
         run: |
           test "$(python -c 'import json; print(json.load(open("codestra/enterprise-profile.v1.json"))["status"])')" = "CONFIG_PREPARED_NOT_DEPLOYED"
+
+      - name: Reject secret material and whitespace errors
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ! grep -RIlE --exclude-dir=.git --exclude-dir=upstream --exclude-dir=tests \
+            '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._~-]{16,}|client_secret[[:space:]]*=[[:space:]]*[^[:space:]<]+)' \
+            .
+          git diff --check

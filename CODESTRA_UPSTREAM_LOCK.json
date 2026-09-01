@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "upstream_clone_url": "https://github.com/prometheus/prometheus.git",
-  "upstream_ref": "main",
+  "upstream_ref": "e06b2dc5a6149e20ca82fe936fb044a6dfe45958",
   "upstream_commit": "e06b2dc5a6149e20ca82fe936fb044a6dfe45958",
   "import_path": "upstream",
   "synchronized_at": "2026-08-29T17:20:54.760671+00:00",

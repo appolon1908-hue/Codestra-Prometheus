@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: codestra-upstream-source-sync
@@ -25,8 +26,11 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+          persist-credentials: true
       - name: Import official upstream source snapshot
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           mapfile -t values < <(python3 - <<'PY'
@@ -37,11 +41,16 @@ jobs:
           PY
           )
           UPSTREAM_URL="${values[0]}"; UPSTREAM_REF="${values[1]}"; IMPORT_PATH="${values[2]}"
-          [[ "$UPSTREAM_URL" == https://github.com/*.git ]] || exit 2
+          [[ "$UPSTREAM_URL" == "https://github.com/prometheus/prometheus.git" ]] || exit 2
+          [[ "$UPSTREAM_REF" =~ ^[0-9a-f]{40}$ ]] || exit 2
           [[ "$IMPORT_PATH" == upstream ]] || exit 2
           rm -rf .codestra-upstream-src "$IMPORT_PATH"
-          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch "$UPSTREAM_REF" "$UPSTREAM_URL" .codestra-upstream-src
+          git init --quiet .codestra-upstream-src
+          git -C .codestra-upstream-src remote add origin "$UPSTREAM_URL"
+          GIT_LFS_SKIP_SMUDGE=1 git -C .codestra-upstream-src fetch --depth 1 --no-tags origin "$UPSTREAM_REF"
+          git -C .codestra-upstream-src checkout --quiet --detach FETCH_HEAD
           UPSTREAM_SHA="$(git -C .codestra-upstream-src rev-parse HEAD)"
+          [[ "$UPSTREAM_SHA" == "$UPSTREAM_REF" ]] || exit 2
           rm -rf .codestra-upstream-src/.git
           mv .codestra-upstream-src "$IMPORT_PATH"
           export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA
@@ -49,13 +58,32 @@ jobs:
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
-          Path('CODESTRA_UPSTREAM_LOCK.json').write_text(json.dumps({'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':datetime.now(timezone.utc).isoformat(),'deployment_enabled':False}, indent=2)+'\n')
+          lock_path=Path('CODESTRA_UPSTREAM_LOCK.json')
+          previous_lock={}
+          if lock_path.is_file():
+              try:
+                  previous_lock=json.loads(lock_path.read_text())
+              except (OSError, ValueError):
+                  previous_lock={}
+          synchronized_at=datetime.now(timezone.utc).isoformat()
+          if (
+              previous_lock.get('upstream_ref') == os.environ['UPSTREAM_REF']
+              and previous_lock.get('upstream_commit') == os.environ['UPSTREAM_SHA']
+          ):
+              synchronized_at=previous_lock.get('synchronized_at', synchronized_at)
+          lock_path.write_text(json.dumps({'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':synchronized_at,'deployment_enabled':False}, indent=2)+'\n')
           PY
           git config user.name 'codestra-upstream-sync'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
+          SYNC_BRANCH="sync/prometheus-upstream-${UPSTREAM_SHA}"
+          git switch --create "$SYNC_BRANCH"
           git add -A upstream CODESTRA_UPSTREAM_LOCK.json
           git diff --cached --quiet && exit 0
           git commit -m "vendor: sync official upstream ${UPSTREAM_SHA}"
-          git push origin HEAD:main
-          git push origin HEAD:staging
-          git push origin HEAD:production
+          git push origin "HEAD:refs/heads/${SYNC_BRANCH}"
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head "$SYNC_BRANCH" \
+            --title "vendor: sync reviewed Prometheus upstream ${UPSTREAM_SHA}" \
+            --body "Pins and imports the exact Prometheus upstream commit ${UPSTREAM_SHA}. Deployment remains disabled. This PR requires normal source validation and independent review."
