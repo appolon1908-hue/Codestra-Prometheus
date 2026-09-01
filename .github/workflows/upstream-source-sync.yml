@@ -101,7 +101,7 @@ jobs:
               --base main \
               --head "$SYNC_BRANCH" \
               --title "vendor: sync reviewed Prometheus upstream ${UPSTREAM_SHA}" \
-              --body "Pins and imports the exact Prometheus upstream commit ${UPSTREAM_SHA}. Deployment remains disabled. This PR requires normal source validation and independent review."
+              --body "$(printf 'Pins and imports the exact Prometheus upstream commit %s. Deployment remains disabled. This PR requires normal source validation and independent review.\n\n```release-notes\nNONE\n```\n' "$UPSTREAM_SHA")"
           fi
           gh workflow run codestra-observability.yml \
             --repo "$GITHUB_REPOSITORY" --ref "$SYNC_BRANCH"

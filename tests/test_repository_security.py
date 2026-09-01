@@ -113,6 +113,13 @@ class RepositorySecurityTests(unittest.TestCase):
             triggers = workflow.get("on") or workflow.get(True) or {}
             self.assertIn("workflow_dispatch", triggers)
 
+    def test_generated_sync_pr_contains_required_release_notes_block(self) -> None:
+        block = "```release-notes\\nNONE\\n```"
+        self.assertIn(block, self.sync_source)
+        weakened = self.sync_source.replace(block, "NONE")
+        with self.assertRaisesRegex(ValueError, "reviewed_sync_boundary_missing"):
+            VALIDATOR.validate_sync(weakened, yaml.safe_load(weakened))
+
     def test_interrupted_sync_retry_reuses_only_identical_branch_and_pr(self) -> None:
         for token in (
             'UPSTREAM_TIMESTAMP="$(git -C .codestra-upstream-src show -s --format=%cI "$UPSTREAM_SHA")"',

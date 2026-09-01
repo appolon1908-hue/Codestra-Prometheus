@@ -62,6 +62,8 @@ def validate_sync(source: str, document: dict) -> None:
         'SYNC_BRANCH="sync/prometheus-upstream-${UPSTREAM_SHA}-${GITHUB_RUN_ID}"',
         'git push origin "HEAD:refs/heads/${SYNC_BRANCH}"',
         "gh pr create",
+        "```release-notes",
+        "NONE",
         'git fetch --depth 1 --no-tags "$UPSTREAM_URL" "$UPSTREAM_SHA"',
         'GIT_LFS_SKIP_SMUDGE=1 git -C .codestra-upstream-src fetch --filter=blob:none --no-tags origin "${TRUSTED_UPSTREAM_REF}:refs/remotes/origin/codestra-trusted"',
         'git -C .codestra-upstream-src merge-base --is-ancestor "$UPSTREAM_REF" refs/remotes/origin/codestra-trusted',
