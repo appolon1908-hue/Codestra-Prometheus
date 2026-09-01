@@ -170,6 +170,8 @@ class RepositorySecurityTests(unittest.TestCase):
         for content in (
             'client_' + 'secret: actual-sensitive-value\n',
             '"client_' + 'secret": "actual-sensitive-value"\n',
+            'client-' + 'secret: actual-sensitive-value\n',
+            '"oauth-client-' + 'secret": "actual-sensitive-value"\n',
         ):
             with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
                 (Path(directory) / "config.txt").write_text(content)
@@ -184,6 +186,8 @@ class RepositorySecurityTests(unittest.TestCase):
         for content in (
             "client_" + "secret:\n  actual-sensitive-value\n",
             '"client_' + 'secret":\n  "actual-sensitive-value"\n',
+            "client-" + "secret:\n  actual-sensitive-value\n",
+            '"oidc-client-' + 'secret":\n  "actual-sensitive-value"\n',
         ):
             with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
                 (Path(directory) / "config.yml").write_text(content)

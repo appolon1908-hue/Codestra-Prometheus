@@ -140,7 +140,7 @@ def validate_secret_scanner(source: str) -> None:
         "-type f -o -type l",
         'if [[ -L "$path" ]]',
         "grep -aEiqz",
-        "client_secret",
+        "client[_-]secret",
         "[[:space:]]*[:=]",
         "PRIVATE KEY",
         "Authorization",
