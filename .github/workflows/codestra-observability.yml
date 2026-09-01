@@ -175,15 +175,13 @@ jobs:
 
       - name: Build pinned upstream promtool
         working-directory: upstream
-        run: |
-          mkdir -p ../.bin
-          go build -trimpath -o ../.bin/promtool ./cmd/promtool
+        run: go build -trimpath -o "${RUNNER_TEMP}/codestra-promtool" ./cmd/promtool
 
       - name: Validate Prometheus configuration
-        run: .bin/promtool check config codestra/prometheus/prometheus.yml
+        run: '"${RUNNER_TEMP}/codestra-promtool" check config codestra/prometheus/prometheus.yml'
 
       - name: Validate Prometheus rules
-        run: .bin/promtool check rules codestra/prometheus/rules/*.yml
+        run: '"${RUNNER_TEMP}/codestra-promtool" check rules codestra/prometheus/rules/*.yml'
 
       - name: Confirm source-only safety state
         run: |

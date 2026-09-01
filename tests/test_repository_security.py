@@ -203,6 +203,20 @@ class RepositorySecurityTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("secret pattern detected", result.stderr)
 
+    def test_promtool_build_output_is_outside_secret_scanned_source_tree(self) -> None:
+        authority = (ROOT / ".github/workflows/codestra-observability.yml").read_text()
+        self.assertIn(
+            'go build -trimpath -o "${RUNNER_TEMP}/codestra-promtool"', authority
+        )
+        self.assertIn(
+            '"${RUNNER_TEMP}/codestra-promtool" check config', authority
+        )
+        self.assertIn(
+            '"${RUNNER_TEMP}/codestra-promtool" check rules', authority
+        )
+        self.assertNotIn("../.bin/promtool", authority)
+        self.assertNotIn(".bin/promtool check", authority)
+
     def test_secret_scanner_rejects_multiline_client_secret_values(self) -> None:
         scanner = ROOT / "scripts/reject_repository_secrets.sh"
         for content in (
