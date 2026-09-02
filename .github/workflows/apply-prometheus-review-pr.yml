@@ -27,21 +27,25 @@ jobs:
           set -Eeuo pipefail
           python3 codestra/scripts/apply_production_review_patch_v2.py
           git diff --check
+          echo "::group::FINAL_CONTROLLED_INTAKE_ACTIVATION_WORKFLOW"
+          cat .github/workflows/controlled-intake-staging-activation-gate.yml
+          echo "::endgroup::"
 
-      - name: Commit patch when required
+      - name: Commit source and production discovery corrections
         env:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -Eeuo pipefail
-          if git diff --quiet; then
-            echo "PROMETHEUS_REVIEW_PATCH_ALREADY_APPLIED=1"
+          if git diff --quiet -- \
+            codestra/scripts/collect_staging_intake_evidence.py \
+            codestra/prometheus/prometheus.yml; then
+            echo "PROMETHEUS_SOURCE_REVIEW_PATCH_ALREADY_APPLIED=1"
             exit 0
           fi
           git config user.name "codestra-production-review"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add \
             codestra/scripts/collect_staging_intake_evidence.py \
-            codestra/prometheus/prometheus.yml \
-            .github/workflows/controlled-intake-staging-activation-gate.yml
-          git commit -m "fix(prometheus): bind production evidence and target discovery"
+            codestra/prometheus/prometheus.yml
+          git commit -m "fix(prometheus): require sampled families and production targets"
           git push origin "HEAD:$HEAD_REF"
