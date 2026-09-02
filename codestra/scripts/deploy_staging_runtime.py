@@ -129,7 +129,7 @@ def main() -> int:
                 "--wait",
                 "--wait-timeout",
                 "120",
-                "prometheus",
+                "prometheus-staging",
             )
         )
     result = subprocess.run(

@@ -21,8 +21,8 @@ IMAGE = (
 def main() -> None:
     document = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     assert document["name"] == "codestra-prometheus-staging"
-    assert set(document["services"]) == {"prometheus"}
-    service = document["services"]["prometheus"]
+    assert set(document["services"]) == {"prometheus-staging"}
+    service = document["services"]["prometheus-staging"]
     assert service["image"] == IMAGE
     assert service["container_name"] == "codestra-prometheus-staging"
     assert service["init"] is True
@@ -96,7 +96,7 @@ def main() -> None:
         'if not secret.strip() or b"\\x00" in secret:',
         '"--force-recreate"',
         '"--wait-timeout"',
-        '"prometheus"',
+        '"prometheus-staging"',
     ):
         assert required in deployer
     print("PROMETHEUS_STAGING_RUNTIME_SOURCE=PASS")
