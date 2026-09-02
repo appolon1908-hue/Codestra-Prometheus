@@ -28,6 +28,7 @@ EXPECTED_SIGNING_KEY_ID = (
     "sha256:926880e6fec1981b93492dbe9004f3381367500f4df4ca3ffaa1c944572dcc20"
 )
 OPENSSL = "/usr/bin/openssl"
+REQUIRED_SIGNING_OWNER_UID = 0
 WRAPPER_ONLY_OPTIONS = {"--signing-key-file", "--signature-output"}
 
 
@@ -98,7 +99,10 @@ def validate_signing_key(path: Path) -> Path:
     if path.is_symlink() or not path.is_file():
         raise collector.EvidenceError("evidence signing key must be a regular file")
     metadata = path.stat()
-    if metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o077:
+    if (
+        metadata.st_uid != REQUIRED_SIGNING_OWNER_UID
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+    ):
         raise collector.EvidenceError(
             "evidence signing key must be root-owned with no group/other access"
         )
@@ -120,7 +124,10 @@ def validate_signing_key(path: Path) -> Path:
 def sign_evidence(evidence_path: Path, signing_key: Path, output: Path) -> None:
     parent = output.parent.resolve(strict=True)
     parent_metadata = parent.stat()
-    if parent_metadata.st_uid != 0 or stat.S_IMODE(parent_metadata.st_mode) & 0o022:
+    if (
+        parent_metadata.st_uid != REQUIRED_SIGNING_OWNER_UID
+        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+    ):
         raise collector.EvidenceError(
             "signature output parent must be root-owned and not group/other writable"
         )

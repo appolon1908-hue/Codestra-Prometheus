@@ -346,6 +346,11 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                             "EXPECTED_SIGNING_KEY_ID",
                             key_id,
                         ),
+                        patch.object(
+                            wrapper,
+                            "REQUIRED_SIGNING_OWNER_UID",
+                            os.geteuid(),
+                        ),
                     ):
                         self.assertEqual(wrapper.main(), 0)
                 finally:
