@@ -91,7 +91,12 @@ def validate_secret_file(path: Path) -> Path:
     if stat.S_IMODE(info.st_mode) not in {0o400, 0o600}:
         raise PreflightError("metrics client secret mode must be 0400 or 0600")
     secret = resolved.read_bytes()
-    if not secret.strip() or b"\x00" in secret:
+    normalized = secret.strip()
+    if (
+        secret != normalized
+        or not 16 <= len(normalized) <= 4096
+        or b"\x00" in normalized
+    ):
         raise PreflightError("metrics client secret content is missing or malformed")
     return resolved
 
