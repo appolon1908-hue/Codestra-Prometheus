@@ -55,8 +55,33 @@ Rendering or deployment must use
 `codestra/scripts/deploy_staging_runtime.py`. Deployment mode rejects a dirty
 checkout, a non-SHA label, a SHA other than the checked-out head, and a head not
 merged into protected `origin/main`; it then recreates only the Prometheus service.
-The deployment waits up to 120 seconds for the source-defined Prometheus
-healthcheck and reports PASS only after the container is healthy.
+Never invoke that Python file as root from a user-owned or user-writable
+checkout. First fetch the accepted exact main SHA into a standalone checkout
+below a root-owned, non-group-writable, non-other-writable directory. The
+deployment preflight recursively enforces that protection for Git metadata,
+the entrypoint, Compose authority, rules, targets, and Prometheus configuration
+before Docker is invoked; Git worktrees and symlinks in that execution closure
+are rejected.
+
+A root operator must prepare the protected source before running any repository
+code:
+
+```bash
+install -d -o root -g root -m 0755 /opt/codestra-observability
+install -d -o root -g root -m 0700 /opt/codestra-observability/prometheus-authority
+git -C /opt/codestra-observability/prometheus-authority init
+git -C /opt/codestra-observability/prometheus-authority remote add origin https://github.com/appolon1908-hue/Codestra-Prometheus.git
+git -C /opt/codestra-observability/prometheus-authority fetch --no-tags origin refs/heads/main
+git -C /opt/codestra-observability/prometheus-authority checkout --detach <accepted-main-sha>
+chown -R root:root /opt/codestra-observability/prometheus-authority
+chmod -R go-w /opt/codestra-observability/prometheus-authority
+python3 /opt/codestra-observability/prometheus-authority/codestra/scripts/deploy_staging_runtime.py ...
+```
+
+Deployment mode must run as root so the UID-65534-owned client-secret file can
+be checked without broadening its ownership or mode. It waits up to 120 seconds
+for the source-defined Prometheus healthcheck and reports PASS only after the
+container is healthy.
 
 ## Immutable runtime preflight
 

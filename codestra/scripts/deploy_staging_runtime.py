@@ -22,6 +22,87 @@ class PreflightError(RuntimeError):
     pass
 
 
+def validate_deployment_identity() -> None:
+    if os.geteuid() != 0:
+        raise PreflightError(
+            "staging Prometheus deployment must run as root so the UID-65534 "
+            "credential can be validated without weakening its mode"
+        )
+
+
+def _validate_protected_path(path: Path, label: str, required_uid: int) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise PreflightError(f"{label} could not be inspected") from exc
+    if stat.S_ISLNK(info.st_mode):
+        raise PreflightError(f"{label} must not be a symbolic link")
+    if info.st_uid != required_uid:
+        raise PreflightError(f"{label} has the wrong owner")
+    if stat.S_IMODE(info.st_mode) & 0o022:
+        raise PreflightError(f"{label} must not be group- or other-writable")
+
+
+def _validate_protected_tree(path: Path, label: str, required_uid: int) -> None:
+    _validate_protected_path(path, label, required_uid)
+    for directory, names, files in os.walk(path, followlinks=False):
+        directory_path = Path(directory)
+        _validate_protected_path(directory_path, label, required_uid)
+        for name in (*names, *files):
+            _validate_protected_path(directory_path / name, label, required_uid)
+
+
+def validate_protected_checkout(
+    repo: Path = REPO,
+    *,
+    required_uid: int = 0,
+    ancestry_root: Path = Path("/"),
+) -> None:
+    """Reject deployment from source another host account can replace."""
+
+    if not repo.is_absolute() or repo.is_symlink():
+        raise PreflightError("deployment checkout must be an absolute non-symlink path")
+    if not ancestry_root.is_absolute() or repo != ancestry_root:
+        try:
+            repo.relative_to(ancestry_root)
+        except ValueError as exc:
+            raise PreflightError("deployment checkout is outside protected ancestry") from exc
+    current = repo
+    while True:
+        _validate_protected_path(
+            current, "deployment checkout ancestry", required_uid
+        )
+        if current == ancestry_root:
+            break
+        if current == current.parent:
+            raise PreflightError("protected ancestry root was not reached")
+        current = current.parent
+
+    git_directory = repo / ".git"
+    if not git_directory.is_dir() or git_directory.is_symlink():
+        raise PreflightError(
+            "deployment checkout must be a standalone protected Git checkout"
+        )
+    _validate_protected_tree(
+        git_directory, "deployment Git metadata", required_uid
+    )
+    _validate_protected_path(
+        repo / "codestra" / "scripts" / "deploy_staging_runtime.py",
+        "deployment entrypoint",
+        required_uid,
+    )
+    _validate_protected_tree(
+        repo / "codestra" / "deploy",
+        "deployment Compose source",
+        required_uid,
+    )
+    _validate_protected_tree(
+        repo / "codestra" / "prometheus",
+        "deployment Prometheus source",
+        required_uid,
+    )
+
+
 def git_output(*args: str) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -108,6 +189,9 @@ def main() -> int:
     parser.add_argument("--secret-file", type=Path, required=True)
     args = parser.parse_args()
 
+    if args.mode == "deploy":
+        validate_deployment_identity()
+        validate_protected_checkout()
     validate_source(args.source_sha, require_merged=args.mode == "deploy")
     secret_file = (
         validate_secret_file(args.secret_file)

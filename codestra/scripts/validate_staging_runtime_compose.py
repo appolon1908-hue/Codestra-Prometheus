@@ -3,10 +3,18 @@
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from pathlib import Path
 
 import yaml
+
+from deploy_staging_runtime import (
+    PreflightError,
+    validate_deployment_identity,
+    validate_protected_checkout,
+)
 
 
 CODESTRA = Path(__file__).resolve().parents[1]
@@ -133,6 +141,7 @@ def main() -> None:
         'CANONICAL_MAIN_REF = "refs/remotes/codestra-canonical/main"',
         'f"+refs/heads/main:{CANONICAL_MAIN_REF}"',
         '"merge-base",',
+        "validate_protected_checkout()",
         "secret != normalized",
         "not 16 <= len(normalized) <= 4096",
         'b"\\x00" in normalized',
@@ -141,6 +150,54 @@ def main() -> None:
         '"prometheus-staging"',
     ):
         assert required in deployer
+    with tempfile.TemporaryDirectory() as temporary:
+        protected = Path(temporary) / "authority"
+        (protected / ".git").mkdir(parents=True)
+        (protected / "codestra" / "scripts").mkdir(parents=True)
+        (protected / "codestra" / "scripts" / "deploy_staging_runtime.py").write_text(
+            "# test\n"
+        )
+        deploy_source = protected / "codestra" / "deploy"
+        deploy_source.mkdir()
+        (deploy_source / "compose.staging.yaml").write_text("services: {}\n")
+        prometheus_source = protected / "codestra" / "prometheus"
+        prometheus_source.mkdir()
+        (prometheus_source / "prometheus-staging.yml").write_text("global: {}\n")
+        validate_protected_checkout(
+            protected,
+            required_uid=os.geteuid(),
+            ancestry_root=Path(temporary),
+        )
+        (deploy_source / "compose.staging.yaml").chmod(0o666)
+        try:
+            validate_protected_checkout(
+                protected,
+                required_uid=os.geteuid(),
+                ancestry_root=Path(temporary),
+            )
+        except PreflightError:
+            pass
+        else:
+            raise AssertionError("writable deployment source was accepted")
+        (deploy_source / "compose.staging.yaml").chmod(0o644)
+        (prometheus_source / "escape").symlink_to("/tmp")
+        try:
+            validate_protected_checkout(
+                protected,
+                required_uid=os.geteuid(),
+                ancestry_root=Path(temporary),
+            )
+        except PreflightError:
+            pass
+        else:
+            raise AssertionError("symlinked deployment source was accepted")
+    if os.geteuid() != 0:
+        try:
+            validate_deployment_identity()
+        except PreflightError:
+            pass
+        else:
+            raise AssertionError("non-root deployment authority was accepted")
     print("PROMETHEUS_STAGING_RUNTIME_SOURCE=PASS")
     print("SECCOMP_DISABLED=NO")
 
