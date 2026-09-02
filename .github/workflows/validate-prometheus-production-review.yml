@@ -1,0 +1,52 @@
+name: Validate Prometheus production review controls
+
+on:
+  pull_request:
+    paths:
+      - "codestra/scripts/collect_staging_intake_evidence.py"
+      - "codestra/scripts/validate_production_review.py"
+      - "codestra/prometheus/prometheus.yml"
+      - ".github/workflows/controlled-intake-staging-activation-gate.yml"
+      - ".github/workflows/validate-prometheus-production-review.yml"
+  push:
+    branches: [development, test, staging, production, main]
+    paths:
+      - "codestra/scripts/collect_staging_intake_evidence.py"
+      - "codestra/scripts/validate_production_review.py"
+      - "codestra/prometheus/prometheus.yml"
+      - ".github/workflows/controlled-intake-staging-activation-gate.yml"
+      - ".github/workflows/validate-prometheus-production-review.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prometheus-production-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned validator dependency
+        run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.3
+
+      - name: Validate sampled metrics, production discovery, and artifact evidence
+        env:
+          PYTHONPYCACHEPREFIX: /tmp/codestra-prometheus-pycache
+        run: |
+          python -m py_compile \
+            codestra/scripts/collect_staging_intake_evidence.py \
+            codestra/scripts/validate_production_review.py
+          python codestra/scripts/validate_production_review.py
