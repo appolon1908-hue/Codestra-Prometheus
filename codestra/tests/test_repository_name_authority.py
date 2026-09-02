@@ -69,6 +69,14 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.validate(compose=changed)
 
+    def test_quoted_inline_host_port_publication_is_denied(self) -> None:
+        changed = self.compose.replace(
+            '    expose:\n      - "9187"',
+            '    expose:\n      - "9187"\n    "ports": ["127.0.0.1:9187:9187"]',
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
     def test_yaml_merge_host_port_publication_is_denied(self) -> None:
         changed = (
             "x-published: &published\n"
@@ -92,6 +100,15 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.validate(compose=changed)
 
+    def test_prometheus_must_share_observability_network(self) -> None:
+        changed = self.compose.replace(
+            "    networks:\n      observability:\n        aliases:\n          - prometheus\n",
+            "    networks:\n      database: {}\n",
+            1,
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
     def test_catalog_repository_must_match_exporter_authority(self) -> None:
         changed = self.services.replace(
             "repo: appolon1908-hue/Codestra-Postgres-Exporter, "
@@ -111,6 +128,18 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
         )
         with self.assertRaises(SystemExit):
             self.validate(services=changed)
+
+    def test_restaurant_service_repository_is_exact(self) -> None:
+        changed = self.services.replace(
+            "repo: appolon1908-hue/Frontend-Resturant-, "
+            "codestra_business: restaurant, application: restaurant, "
+            "service: restaurant-backend",
+            "repo: appolon1908-hue/unapproved-restaurant, "
+            "codestra_business: restaurant, application: restaurant, "
+            "service: restaurant-backend",
+        )
+        record = AUTHORITY.inline_service_record(changed, "restaurant-backend")
+        self.assertNotEqual(record.get("repo"), AUTHORITY.CURRENT_REPOSITORY)
 
     def test_generated_bytecode_is_excluded_from_source_scan(self) -> None:
         self.assertTrue(
