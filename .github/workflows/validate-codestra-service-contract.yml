@@ -21,6 +21,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  canonical-contract-authority:
+    uses: appolon1908-hue/Codestra-Telemetry/.github/workflows/reusable-validate-service-contract.yml@1ca489c9060d79f849eb7d656f9c85c4b4b56cac
+    with:
+      expected_repository: 'appolon1908-hue/Codestra-Prometheus'
+      expected_component: 'prometheus'
+      expected_contract_id: 'codestra.observability.prometheus.v1'
+      schema_authority_revision: '1ca489c9060d79f849eb7d656f9c85c4b4b56cac'
+
   validate-service-contract:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -55,7 +63,7 @@ jobs:
           assert contract['schemaAuthority'] == {
               'repository': 'appolon1908-hue/Codestra-Telemetry',
               'path': 'codestra/api/service-contract.schema.json',
-              'sourceRevision': 'ed89242841ccab5b0ee0304da7ba21ba70cafc06',
+              'sourceRevision': '1ca489c9060d79f849eb7d656f9c85c4b4b56cac',
               'version': '1.0.0',
           }
           assert contract['deploymentClass'] in {'central', 'agent'}
