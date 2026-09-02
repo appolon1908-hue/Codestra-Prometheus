@@ -78,7 +78,9 @@ def main() -> None:
         'SHA40 = re.compile(r"^[0-9a-f]{40}$")',
         'git_output("rev-parse", "HEAD") != source_sha',
         '"merge-base", "--is-ancestor", source_sha, "origin/development"',
-        '("up", "-d", "--no-deps", "prometheus")',
+        '"--force-recreate"',
+        '"--wait-timeout"',
+        '"prometheus"',
     ):
         assert required in deployer
     print("PROMETHEUS_STAGING_RUNTIME_SOURCE=PASS")

@@ -27,6 +27,8 @@ Rendering or deployment must use
 `codestra/scripts/deploy_staging_runtime.py`. Deployment mode rejects a dirty
 checkout, a non-SHA label, a SHA other than the checked-out head, and a head not
 merged into `origin/development`; it then recreates only the Prometheus service.
+The deployment waits up to 120 seconds for the source-defined Prometheus
+healthcheck and reports PASS only after the container is healthy.
 
 ## Immutable runtime preflight
 

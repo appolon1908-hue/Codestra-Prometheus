@@ -92,7 +92,18 @@ def main() -> int:
     if args.mode == "render":
         command.extend(("config", "--quiet"))
     else:
-        command.extend(("up", "-d", "--no-deps", "prometheus"))
+        command.extend(
+            (
+                "up",
+                "-d",
+                "--no-deps",
+                "--force-recreate",
+                "--wait",
+                "--wait-timeout",
+                "120",
+                "prometheus",
+            )
+        )
     result = subprocess.run(
         command,
         cwd=REPO,
