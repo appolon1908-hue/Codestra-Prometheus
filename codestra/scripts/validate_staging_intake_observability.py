@@ -104,6 +104,8 @@ def validate(expected_activation: str = "pending") -> None:
         "unauthenticated /metrics",
         "wrong-token /metrics",
         "all_external_effects_disabled",
+        "umbrella_controls",
+        "EXPECTED_UMBRELLA_CONTROL_KEYS",
         "staging_safe",
         "EVIDENCE_SHA256",
     ):

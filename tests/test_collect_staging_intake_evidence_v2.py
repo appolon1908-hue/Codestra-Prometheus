@@ -64,7 +64,7 @@ def metrics_payload() -> bytes:
 
 def safety_document() -> dict[str, object]:
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "service": "middleware-api",
         "environment": "staging",
         "runtime_profile_id": "codestra-middleware-staging-v1",
@@ -82,6 +82,9 @@ def safety_document() -> dict[str, object]:
         },
         "external_effects": {
             name: False for name in collector.EXPECTED_EXTERNAL_EFFECT_KEYS
+        },
+        "umbrella_controls": {
+            name: False for name in collector.EXPECTED_UMBRELLA_CONTROL_KEYS
         },
         "production_dialing": "DISABLED",
         "production_activation_configured": False,
