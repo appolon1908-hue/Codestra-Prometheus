@@ -52,7 +52,7 @@ jobs:
           assert contract['schemaAuthority'] == {
               'repository': 'appolon1908-hue/Codestra-Telemetry',
               'path': 'codestra/api/service-contract.schema.json',
-              'sourceRevision': '420f71f873c2094f17467d0ac7e8faadeafbdc85',
+              'sourceRevision': 'ed89242841ccab5b0ee0304da7ba21ba70cafc06',
               'version': '1.0.0',
           }
           assert contract['deploymentClass'] in {'central', 'agent'}
@@ -60,14 +60,19 @@ jobs:
           assert re.fullmatch(r'CODESTRA_[A-Z0-9_]+', contract['nativeApi']['baseUrlEnvironment'])
           operations = {item['id']: item for item in contract['nativeApi']['operations']}
           assert len(operations) == len(contract['nativeApi']['operations'])
+          for operation in operations.values():
+              path = operation['path']
+              assert isinstance(path, str) and path.startswith('/') and not path.startswith('//')
+              assert '\r' not in path and '\n' not in path
+              assert operation['controlPlaneProxyAllowed'] is False
           for key in ('healthOperationId', 'readinessOperationId'):
               operation = operations[contract['managementReadback'][key]]
               assert operation['method'] in {'GET', 'HEAD'}
               assert operation['access'] == 'read_only'
               assert operation['responseBodyPolicy'] == 'discard'
-          assert all(item['controlPlaneProxyAllowed'] is False for item in operations.values())
           assert all(item['mutating'] is False for item in contract['integrations'])
           assert contract['managementReadback']['controlApiOwner'] == 'appolon1908-hue/Codestra-Telemetry'
+          assert contract['managementReadback']['registryServiceId'] == contract['component']
           assert contract['managementReadback']['responseBodyPolicy'] == 'discard'
           assert contract['managementReadback']['exposesSecretValues'] is False
           assert contract['managementReadback']['allowsMutation'] is False
