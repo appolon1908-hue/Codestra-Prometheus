@@ -51,7 +51,7 @@ The control plane reads source revision and image digest only from deployment en
 ## Contract authority handoff
 
 - Canonical schema repository: `appolon1908-hue/Codestra-Telemetry`
-- Canonical merged Telemetry SHA: `1ca489c9060d79f849eb7d656f9c85c4b4b56cac`
+- Canonical merged Telemetry SHA: `c35d880a730ca5206d445e8a9a688cb465ae2ad4`
 - Contract version: `1.0.0`
 - Downstream exact head: this PR branch commit; the authoritative literal SHA is the GitHub PR `headRefOid` recorded after this handoff commit.
 - Deployment authorization: unauthorized until staging certification and protected production promotion are complete.

@@ -70,7 +70,7 @@
   "schemaAuthority": {
     "path": "codestra/api/service-contract.schema.json",
     "repository": "appolon1908-hue/Codestra-Telemetry",
-    "sourceRevision": "1ca489c9060d79f849eb7d656f9c85c4b4b56cac",
+    "sourceRevision": "c35d880a730ca5206d445e8a9a688cb465ae2ad4",
     "version": "1.0.0"
   },
   "schemaVersion": "1.0.0",
