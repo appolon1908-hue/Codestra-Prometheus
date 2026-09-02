@@ -11,6 +11,7 @@ import yaml
 
 CODESTRA = Path(__file__).resolve().parents[1]
 COMPOSE = CODESTRA / "deploy" / "compose.staging.yaml"
+PROMETHEUS_CONFIG = CODESTRA / "prometheus" / "prometheus-staging.yml"
 IMAGE = (
     "prom/prometheus:v3.5.0@sha256:"
     "63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996"
@@ -45,6 +46,14 @@ def main() -> None:
         "check",
         "healthy",
     ]
+    assert not any(
+        "/etc/prometheus/rules" in str(volume)
+        for volume in service.get("volumes", [])
+    )
+    prometheus_config = yaml.safe_load(
+        PROMETHEUS_CONFIG.read_text(encoding="utf-8")
+    )
+    assert "rule_files" not in prometheus_config
     assert service["secrets"] == [
         {
             "source": "middleware_staging_monitoring_client_secret",

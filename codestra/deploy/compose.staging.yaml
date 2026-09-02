@@ -27,7 +27,6 @@ services:
       - "9090"
     volumes:
       - ../prometheus/prometheus-staging.yml:/etc/prometheus/prometheus.yml:ro
-      - ../prometheus/rules:/etc/prometheus/rules:ro
       - ../prometheus/targets:/etc/prometheus/targets:ro
       - prometheus_staging_data:/prometheus
     secrets:
