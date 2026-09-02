@@ -47,11 +47,17 @@ files after the delay and rejects unchanged credentials before the second scrape
 or runtime-safety readback.
 
 The v2 collector requires `--signing-key-file` and `--signature-output`. The
-private key must be root-owned with no group/other access and must match
+private key must be below
+`/var/lib/codestra/staging/prometheus-evidence-signing`, root-owned with no
+group/other access, and must match
 `integration/staging-evidence-signing-public.pem`; it stays outside Git. The
-collector creates a mode-`0600` detached signature and refuses an existing or
-symbolic signature output. An ordinary evidence checksum is never sufficient
-for activation without this signature.
+collector writes evidence, checksum, and a mode-`0600` detached signature only
+as direct children of `/var/lib/codestra/staging/prometheus-evidence`, whose
+complete ancestry must be protected. It refuses an existing or symbolic
+signature output. An ordinary evidence checksum is never sufficient for
+activation without this signature. OpenSSL runs with a fixed system
+configuration/module allowlist, and the signer hashes and signs the same bytes
+through a sealed in-memory file descriptor.
 
 While the target label is `pending`, the dedicated
 `middleware-intake-staging-readiness` scrape job exercises the same OAuth2

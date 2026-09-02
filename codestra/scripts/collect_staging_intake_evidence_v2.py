@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import fcntl
 import hashlib
 import io
 import json
@@ -28,7 +29,11 @@ EXPECTED_SIGNING_KEY_ID = (
     "sha256:926880e6fec1981b93492dbe9004f3381367500f4df4ca3ffaa1c944572dcc20"
 )
 OPENSSL = "/usr/bin/openssl"
+OPENSSL_CONFIG = "/etc/ssl/openssl.cnf"
+OPENSSL_MODULES = "/usr/lib/x86_64-linux-gnu/ossl-modules"
 REQUIRED_SIGNING_OWNER_UID = 0
+EVIDENCE_OUTPUT_ROOT = Path("/var/lib/codestra/staging/prometheus-evidence")
+SIGNING_KEY_ROOT = Path("/var/lib/codestra/staging/prometheus-evidence-signing")
 WRAPPER_ONLY_OPTIONS = {"--signing-key-file", "--signature-output"}
 
 
@@ -95,6 +100,78 @@ def collector_argv(argv: list[str]) -> list[str]:
     return filtered
 
 
+def trusted_openssl_environment() -> dict[str, str]:
+    for item, expected_type in (
+        (Path(OPENSSL), "file"),
+        (Path(OPENSSL_CONFIG), "file"),
+        (Path(OPENSSL_MODULES), "directory"),
+    ):
+        if item.is_symlink():
+            raise collector.EvidenceError(f"trusted OpenSSL {expected_type} is symbolic")
+        metadata = item.stat()
+        correct_type = item.is_file() if expected_type == "file" else item.is_dir()
+        if not correct_type or metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise collector.EvidenceError(
+                f"trusted OpenSSL {expected_type} is absent or writable"
+            )
+    return {
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "OPENSSL_CONF": OPENSSL_CONFIG,
+        "OPENSSL_MODULES": OPENSSL_MODULES,
+    }
+
+
+def validate_protected_directory(directory: Path, label: str) -> Path:
+    absolute = Path(os.path.abspath(directory))
+    resolved = absolute.resolve(strict=True)
+    if absolute != resolved:
+        raise collector.EvidenceError(f"{label} ancestry must not be symbolic")
+    current = resolved
+    while True:
+        metadata = current.stat()
+        mode = stat.S_IMODE(metadata.st_mode)
+        allowed_owner = metadata.st_uid in {0, REQUIRED_SIGNING_OWNER_UID}
+        sticky_system_parent = metadata.st_uid == 0 and bool(mode & stat.S_ISVTX)
+        if (
+            not current.is_dir()
+            or not allowed_owner
+            or (mode & 0o022 and not sticky_system_parent)
+        ):
+            raise collector.EvidenceError(f"{label} ancestry is not protected")
+        if current == current.parent:
+            break
+        current = current.parent
+    return resolved
+
+
+def validate_protected_output(path: Path, *, must_be_absent: bool) -> None:
+    configured_root = validate_protected_directory(
+        EVIDENCE_OUTPUT_ROOT,
+        "evidence output",
+    )
+    absolute_parent = Path(os.path.abspath(path.parent))
+    if absolute_parent != configured_root:
+        raise collector.EvidenceError(
+            "evidence outputs must be direct children of the configured protected root"
+        )
+    if path.is_symlink():
+        raise collector.EvidenceError("evidence output must not be symbolic")
+    if must_be_absent and path.exists():
+        raise collector.EvidenceError("signature output already exists")
+    if path.exists():
+        metadata = path.stat()
+        if (
+            not path.is_file()
+            or metadata.st_uid != REQUIRED_SIGNING_OWNER_UID
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+        ):
+            raise collector.EvidenceError(
+                "existing evidence output must be protected and regular"
+            )
+
+
 def validate_signing_key(path: Path) -> Path:
     if path.is_symlink() or not path.is_file():
         raise collector.EvidenceError("evidence signing key must be a regular file")
@@ -107,11 +184,17 @@ def validate_signing_key(path: Path) -> Path:
             "evidence signing key must be root-owned with no group/other access"
         )
     resolved = path.resolve(strict=True)
+    configured_root = validate_protected_directory(SIGNING_KEY_ROOT, "signing key")
+    if resolved.parent != configured_root:
+        raise collector.EvidenceError(
+            "evidence signing key must be inside the configured protected root"
+        )
     command = subprocess.run(
         [OPENSSL, "pkey", "-in", str(resolved), "-pubout", "-outform", "DER"],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=trusted_openssl_environment(),
     )
     if command.returncode != 0 or not command.stdout:
         raise collector.EvidenceError("evidence signing key is not a valid private key")
@@ -121,33 +204,67 @@ def validate_signing_key(path: Path) -> Path:
     return resolved
 
 
-def sign_evidence(evidence_path: Path, signing_key: Path, output: Path) -> None:
-    parent = output.parent.resolve(strict=True)
-    parent_metadata = parent.stat()
-    if (
-        parent_metadata.st_uid != REQUIRED_SIGNING_OWNER_UID
-        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
-    ):
+def exact_evidence_bytes(path: Path, expected_checksum: str) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != REQUIRED_SIGNING_OWNER_UID
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+        ):
+            raise collector.EvidenceError(
+                "runtime evidence must be a protected regular file"
+            )
+        encoded = stream.read(8 * 1024 * 1024 + 1)
+    if len(encoded) > 8 * 1024 * 1024:
+        raise collector.EvidenceError("runtime evidence exceeds the maximum size")
+    actual_checksum = "sha256:" + hashlib.sha256(encoded).hexdigest()
+    if actual_checksum != expected_checksum:
         raise collector.EvidenceError(
-            "signature output parent must be root-owned and not group/other writable"
+            "runtime evidence bytes do not match the collector checksum"
         )
-    if output.is_symlink() or output.exists():
-        raise collector.EvidenceError("signature output already exists or is symbolic")
-    command = subprocess.run(
-        [
-            OPENSSL,
-            "pkeyutl",
-            "-sign",
-            "-inkey",
-            str(signing_key),
-            "-rawin",
-            "-in",
-            str(evidence_path.resolve(strict=True)),
-        ],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+    return encoded
+
+
+def sign_evidence(evidence: bytes, signing_key: Path, output: Path) -> None:
+    descriptor = os.memfd_create(
+        "codestra-staging-evidence",
+        flags=os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
     )
+    try:
+        remaining = memoryview(evidence)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            remaining = remaining[written:]
+        fcntl.fcntl(
+            descriptor,
+            fcntl.F_ADD_SEALS,
+            fcntl.F_SEAL_SEAL
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_WRITE,
+        )
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        command = subprocess.run(
+            [
+                OPENSSL,
+                "pkeyutl",
+                "-sign",
+                "-inkey",
+                str(signing_key),
+                "-rawin",
+                "-in",
+                f"/proc/self/fd/{descriptor}",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=trusted_openssl_environment(),
+            pass_fds=(descriptor,),
+        )
+    finally:
+        os.close(descriptor)
     if command.returncode != 0 or len(command.stdout) != 64:
         raise collector.EvidenceError("runtime evidence signature generation failed")
     encoded = base64.b64encode(command.stdout).decode("ascii") + "\n"
@@ -160,6 +277,9 @@ def sign_evidence(evidence_path: Path, signing_key: Path, output: Path) -> None:
 def main() -> int:
     args = parse_wrapper_args(sys.argv[1:])
     base_url, _, _ = collector.validate_configured_base_url(args.base_url)
+    validate_protected_output(args.output, must_be_absent=False)
+    validate_protected_output(args.checksum_output, must_be_absent=False)
+    validate_protected_output(args.signature_output, must_be_absent=True)
     metrics_token = collector.read_private_file(args.metrics_token_file)
     health_token = collector.read_private_file(args.health_token_file)
     metrics_metadata = exact_scope_metadata(metrics_token, METRICS_SCOPE)
@@ -222,7 +342,8 @@ def main() -> int:
     args.checksum_output.write_text(checksum + "\n", encoding="utf-8")
     os.chmod(args.checksum_output, 0o600)
     signing_key = validate_signing_key(args.signing_key_file)
-    sign_evidence(args.output, signing_key, args.signature_output)
+    evidence_bytes = exact_evidence_bytes(args.output, checksum)
+    sign_evidence(evidence_bytes, signing_key, args.signature_output)
     print("STAGING_INTAKE_EVIDENCE_V2=PASS")
     print(f"EVIDENCE_SHA256={checksum}")
     print("EVIDENCE_SIGNATURE=PASS")

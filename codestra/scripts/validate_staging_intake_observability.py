@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import re
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,6 +27,8 @@ EXPECTED_EVIDENCE_SIGNING_KEY_ID = (
     "sha256:926880e6fec1981b93492dbe9004f3381367500f4df4ca3ffaa1c944572dcc20"
 )
 OPENSSL = "/usr/bin/openssl"
+OPENSSL_CONFIG = "/etc/ssl/openssl.cnf"
+OPENSSL_MODULES = "/usr/lib/x86_64-linux-gnu/ossl-modules"
 PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus-staging.yml"
 PRIMARY_PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus.yml"
 EXPECTED_METRIC_LABELDROP_REGEX = (
@@ -131,6 +134,26 @@ EXPECTED_MUST_VERIFY = {
 }
 
 
+def trusted_openssl_environment() -> dict[str, str]:
+    for item, expected_type in (
+        (Path(OPENSSL), "file"),
+        (Path(OPENSSL_CONFIG), "file"),
+        (Path(OPENSSL_MODULES), "directory"),
+    ):
+        assert not item.is_symlink()
+        metadata = item.stat()
+        correct_type = item.is_file() if expected_type == "file" else item.is_dir()
+        assert correct_type and metadata.st_uid == 0
+        assert stat.S_IMODE(metadata.st_mode) & 0o022 == 0
+    return {
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "OPENSSL_CONF": OPENSSL_CONFIG,
+        "OPENSSL_MODULES": OPENSSL_MODULES,
+    }
+
+
 def validate_evidence_signing_authority(evidence_control: dict[str, object]) -> None:
     assert evidence_control["signature_algorithm"] == "ed25519"
     assert evidence_control["signing_public_key_path"] == (
@@ -159,6 +182,7 @@ def validate_evidence_signing_authority(evidence_control: dict[str, object]) -> 
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=trusted_openssl_environment(),
     )
     assert public_der.returncode == 0 and public_der.stdout
     actual_key_id = "sha256:" + hashlib.sha256(public_der.stdout).hexdigest()
@@ -200,6 +224,7 @@ def validate_runtime_evidence_signature(evidence_control: dict[str, object]) -> 
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=trusted_openssl_environment(),
         )
     assert verification.returncode == 0
 

@@ -254,6 +254,22 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
         with self.assertRaises(collector.EvidenceError):
             wrapper.exact_scope_metadata(token("health.read", "wrong"), "metrics.read")
 
+    def test_exact_evidence_bytes_rejects_checksum_race(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "evidence.json"
+            original = b'{"overall_result":"PASS"}\n'
+            expected = "sha256:" + hashlib.sha256(original).hexdigest()
+            path.write_bytes(original)
+            os.chmod(path, 0o600)
+            path.write_bytes(b'{"overall_result":"FORGED_PASS"}\n')
+            with patch.object(
+                wrapper,
+                "REQUIRED_SIGNING_OWNER_UID",
+                os.geteuid(),
+            ):
+                with self.assertRaises(collector.EvidenceError):
+                    wrapper.exact_evidence_bytes(path, expected)
+
     def test_full_get_only_scope_isolated_collection(self):
         initial_metrics_token = token("metrics.read", "metrics-initial")
         initial_health_token = token("health.read", "health-initial")
@@ -350,6 +366,15 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                             wrapper,
                             "REQUIRED_SIGNING_OWNER_UID",
                             os.geteuid(),
+                        ),
+                        patch.object(wrapper, "EVIDENCE_OUTPUT_ROOT", root),
+                        patch.object(wrapper, "SIGNING_KEY_ROOT", root),
+                        patch.dict(
+                            os.environ,
+                            {
+                                "OPENSSL_CONF": "/untrusted/openssl.cnf",
+                                "OPENSSL_MODULES": "/untrusted/modules",
+                            },
                         ),
                     ):
                         self.assertEqual(wrapper.main(), 0)
