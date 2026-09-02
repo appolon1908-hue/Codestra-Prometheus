@@ -54,6 +54,9 @@ scrape_configs:
       - files: ["/etc/prometheus/targets/*.json"]
         refresh_interval: 30s
     relabel_configs:
+      - source_labels: [environment]
+        regex: staging
+        action: drop
       - source_labels: [activation]
         regex: active
         action: keep

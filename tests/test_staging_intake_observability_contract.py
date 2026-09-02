@@ -216,6 +216,7 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
             source.CONTRACT_PATH,
             source.EVIDENCE_PATH,
             source.PROMETHEUS_CONFIG_PATH,
+            source.PRIMARY_PROMETHEUS_CONFIG_PATH,
         )
 
     def tearDown(self) -> None:
@@ -224,6 +225,7 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
             source.CONTRACT_PATH,
             source.EVIDENCE_PATH,
             source.PROMETHEUS_CONFIG_PATH,
+            source.PRIMARY_PROMETHEUS_CONFIG_PATH,
         ) = self.original_paths
 
     def prepare_active_fixture(
@@ -271,6 +273,31 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
             jobs["middleware-intake-staging-readiness"]["metric_relabel_configs"] = []
             path.write_text(yaml.safe_dump(config, sort_keys=False))
             source.PROMETHEUS_CONFIG_PATH = path
+            with self.assertRaises(AssertionError):
+                source.validate("pending")
+
+    def test_pending_source_rejects_primary_staging_scrape_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prometheus.yml"
+            config = yaml.safe_load(self.original_paths[4].read_text())
+            jobs = {item["job_name"]: item for item in config["scrape_configs"]}
+            jobs["codestra-targets"]["relabel_configs"] = [
+                item
+                for item in jobs["codestra-targets"]["relabel_configs"]
+                if item.get("action") != "drop"
+            ]
+            path.write_text(yaml.safe_dump(config, sort_keys=False))
+            source.PRIMARY_PROMETHEUS_CONFIG_PATH = path
+            with self.assertRaises(AssertionError):
+                source.validate("pending")
+
+    def test_pending_source_rejects_staging_target_label_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "staging.json"
+            targets = json.loads(self.original_paths[0].read_text())
+            targets[0]["labels"]["region"] = "unreviewed-region"
+            path.write_text(json.dumps(targets))
+            source.TARGETS_PATH = path
             with self.assertRaises(AssertionError):
                 source.validate("pending")
 

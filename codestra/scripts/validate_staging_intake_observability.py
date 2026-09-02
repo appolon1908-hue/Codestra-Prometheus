@@ -18,6 +18,7 @@ TARGETS_PATH = CODESTRA / "prometheus/targets/staging.json"
 CONTRACT_PATH = REPO / "integration/staging-activation-contract-v1.json"
 EVIDENCE_PATH = REPO / "integration/staging-runtime-evidence-v1.json"
 PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus-staging.yml"
+PRIMARY_PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus.yml"
 EXPECTED_METRIC_LABELDROP_REGEX = (
     "(?i)^(tenant_id|tenant_name|organization_id|organization_name|customer_id|"
     "customer_name|account_id|user_id|user_name|email|phone|consumer|workspace|"
@@ -365,6 +366,28 @@ def validate_reviewed_git_evidence(contract: dict[str, object]) -> None:
 
 def validate(expected_activation: str = "pending") -> None:
     assert expected_activation in {"pending", "active"}
+    primary_config = yaml.safe_load(PRIMARY_PROMETHEUS_CONFIG_PATH.read_text())
+    primary_jobs = {
+        item["job_name"]: item for item in primary_config["scrape_configs"]
+    }
+    assert primary_jobs["codestra-targets"]["file_sd_configs"] == [
+        {
+            "files": ["/etc/prometheus/targets/*.json"],
+            "refresh_interval": "30s",
+        }
+    ]
+    assert primary_jobs["codestra-targets"]["relabel_configs"] == [
+        {
+            "source_labels": ["environment"],
+            "regex": "staging",
+            "action": "drop",
+        },
+        {
+            "source_labels": ["activation"],
+            "regex": "active",
+            "action": "keep",
+        },
+    ]
     config = yaml.safe_load(PROMETHEUS_CONFIG_PATH.read_text())
     jobs = {item["job_name"]: item for item in config["scrape_configs"]}
     assert set(jobs) == {
@@ -414,11 +437,19 @@ def validate(expected_activation: str = "pending") -> None:
     assert len(targets) == 1
     assert targets[0]["targets"] == ["middleware-intake-staging:8080"]
     labels = targets[0]["labels"]
-    assert labels["activation"] == expected_activation
-    assert labels["environment"] == "staging"
-    assert labels["tenant_scope"] == "aggregate"
-    assert labels["service"] == "middleware-intake"
-    assert labels["release_id"] == "f6748a58f8d2-695fa3ce3f50"
+    assert labels == {
+        "activation": expected_activation,
+        "job_class": "backend",
+        "codestra_business": "platform",
+        "environment": "staging",
+        "region": "hetzner-eu",
+        "deployment": "middleware-f6748a58",
+        "server": "codestra-staging-private-01",
+        "application": "integration",
+        "service": "middleware-intake",
+        "tenant_scope": "aggregate",
+        "release_id": "f6748a58f8d2-695fa3ce3f50",
+    }
 
     contract = json.loads(CONTRACT_PATH.read_text())
     authority = contract["middleware_source_authority"]
