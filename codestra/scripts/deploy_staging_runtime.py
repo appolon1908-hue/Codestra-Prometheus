@@ -43,6 +43,7 @@ EXPECTED_COMMAND = [
     "--query.max-concurrency=20",
     "--query.timeout=2m",
 ]
+EXPECTED_ENTRYPOINT = ["/bin/prometheus"]
 EXPECTED_READONLY_BIND_MOUNTS = {
     "/etc/prometheus/prometheus.yml": REPO
     / "codestra/prometheus/prometheus-staging.yml",
@@ -503,6 +504,7 @@ def validate_running_container_security(
         raise PreflightError("deployed Prometheus image did not match")
     if (
         config.get("User") != "65534:0"
+        or config.get("Entrypoint") != EXPECTED_ENTRYPOINT
         or config.get("Cmd") != EXPECTED_COMMAND
         or config.get("ExposedPorts") != {"9090/tcp": {}}
         or not isinstance(config.get("Healthcheck"), dict)

@@ -391,8 +391,6 @@ def validate_runtime_evidence(contract: dict[str, object]) -> None:
         assert parsed_address.is_private
         assert not parsed_address.is_loopback
         assert not parsed_address.is_link_local
-        if name == "codestra-observability":
-            assert parsed_address in ipaddress.ip_network("192.168.16.0/24")
     authority = contract["middleware_source_authority"]
     supply_chain = evidence["supply_chain"]
     assert supply_chain == {

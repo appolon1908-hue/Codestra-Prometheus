@@ -66,6 +66,7 @@ class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
             "Config": {
                 "Image": deployer.EXPECTED_IMAGE,
                 "User": "65534:0",
+                "Entrypoint": deployer.EXPECTED_ENTRYPOINT,
                 "Cmd": deployer.EXPECTED_COMMAND,
                 "ExposedPorts": {"9090/tcp": {}},
                 "Healthcheck": {

@@ -154,6 +154,7 @@ def main() -> None:
         'DOCKER = "/usr/bin/docker"',
         'CONTAINER_NAME = "codestra-prometheus-staging"',
         "EXPECTED_READONLY_BIND_MOUNTS",
+        'EXPECTED_ENTRYPOINT = ["/bin/prometheus"]',
         "_runtime_configuration_sha256()",
         "_validate_runtime_mounts(before)",
         'network_addresses[name] = str(parsed_address)',
