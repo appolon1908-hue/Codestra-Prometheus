@@ -85,9 +85,10 @@ def anchored_mapping(text: str, alias: str) -> str | None:
 
 
 def mapping_declares_ports(mapping: str, compose: str) -> bool:
-    """Resolve YAML merge anchors and detect inherited host publications."""
+    """Resolve YAML merge anchors and detect direct or inherited host ports."""
 
-    if re.search(r"(?m)(?:^|[{,])\s*ports\s*:", mapping):
+    ports_key = r"[\"']?ports[\"']?\s*:"
+    if re.search(rf"(?m)(?:^|[{{,])\s*{ports_key}", mapping):
         return True
     if not re.search(r"(?m)^\s*<<\s*:", mapping):
         return False
@@ -159,23 +160,37 @@ def validate_postgres_operational_identity(
     if authority_match is None or authority_match.group(1) != postgres_repository:
         fail("services catalog PostgreSQL Exporter authority drifted")
 
-    service = indented_block(compose, "postgres-exporter", 2)
-    if service is None:
+    exporter_service = indented_block(compose, "postgres-exporter", 2)
+    if exporter_service is None:
         fail("Compose PostgreSQL Exporter service is missing")
-    if mapping_declares_ports(service, compose):
+    if mapping_declares_ports(exporter_service, compose):
         fail("PostgreSQL Exporter must not publish a host port")
-    if not re.search(r'(?m)^    expose:\n      - "9187"\s*$', service):
+    if not re.search(r'(?m)^    expose:\n      - "9187"\s*$', exporter_service):
         fail("PostgreSQL Exporter must expose port 9187 privately")
 
-    networks = indented_block(service, "networks", 4)
-    if networks is None:
+    exporter_networks = indented_block(exporter_service, "networks", 4)
+    if exporter_networks is None:
         fail("Compose PostgreSQL Exporter networks are missing")
-    observability = indented_block(networks, "observability", 6)
-    if observability is None or not re.search(
+    exporter_observability = indented_block(exporter_networks, "observability", 6)
+    if exporter_observability is None or not re.search(
         r"(?m)^          - postgres-exporter\s*$",
-        observability,
+        exporter_observability,
     ):
         fail("Compose private exporter alias is missing")
+
+    prometheus_service = indented_block(compose, "prometheus", 2)
+    if prometheus_service is None:
+        fail("Compose Prometheus service is missing")
+    prometheus_networks = indented_block(prometheus_service, "networks", 4)
+    if prometheus_networks is None:
+        fail("Compose Prometheus networks are missing")
+    prometheus_observability = indented_block(
+        prometheus_networks,
+        "observability",
+        6,
+    )
+    if prometheus_observability is None:
+        fail("Prometheus must share the observability network with PostgreSQL Exporter")
 
 
 def validate() -> None:
@@ -217,8 +232,9 @@ def validate() -> None:
         fail("Prometheus repository alias mapping does not match the approved migration")
 
     services = SERVICES.read_text(encoding="utf-8")
-    if CURRENT_REPOSITORY not in services:
-        fail("services catalog lost the current restaurant frontend before cutover")
+    restaurant = inline_service_record(services, "restaurant-backend")
+    if restaurant.get("repo") != CURRENT_REPOSITORY:
+        fail("restaurant service record lost the current frontend repository")
     if TARGET_REPOSITORY in services:
         fail("services catalog uses the target restaurant frontend before cutover")
 
