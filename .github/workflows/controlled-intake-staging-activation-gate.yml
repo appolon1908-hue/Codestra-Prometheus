@@ -3,7 +3,12 @@ name: Controlled intake staging activation preparation gate
 on:
   pull_request:
     paths:
+      - "codestra/prometheus/targets/staging.json"
+      - "codestra/scripts/validate_staging_intake_observability.py"
+      - "codestra/scripts/validate_staging_intake_observability_activation.py"
+      - "codestra/scripts/validate_staging_intake_observability_contract.py"
       - "integration/staging-activation-contract-v1.json"
+      - "integration/staging-runtime-evidence-v1.json"
       - ".github/workflows/controlled-intake-staging-activation-gate.yml"
   workflow_dispatch:
     inputs:
@@ -53,15 +58,39 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.3
       - name: Validate signed immutable Middleware release lock
+        env:
+          ACTIVATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           python3 - <<'PY'
           import json
           import os
           import re
+          import subprocess
           from pathlib import Path
 
           data = json.loads(Path("integration/staging-activation-contract-v1.json").read_text())
+          target = json.loads(Path("codestra/prometheus/targets/staging.json").read_text())
+          activation = target[0]["labels"]["activation"]
+          if activation == "active":
+              subprocess.run(
+                  [
+                      "python3",
+                      "codestra/scripts/validate_staging_intake_observability_contract.py",
+                  ],
+                  check=True,
+                  env=os.environ.copy(),
+              )
+              raise SystemExit(0)
+          assert activation == "pending"
           assert data["schema_version"] == "1.1"
           assert data["suite_id"] == "codestra-controlled-intake-monitoring-v1"
           assert data["repository"] == os.environ["GITHUB_REPOSITORY"]

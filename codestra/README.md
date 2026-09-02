@@ -12,9 +12,51 @@ Backends expose normalized `codestra_http_requests_total`, `codestra_http_reques
 
 ## Activation
 
-Targets marked `activation=pending` are catalogued but deliberately not scraped. Flip a target to `active` only after its service-owned PR, private-network attachment, endpoint contract test, and cardinality review pass. MoneyBee remains excluded under the owner's standing no-change directive.
+Targets marked `activation=pending` are excluded from the active workload job. The
+controlled Middleware target is scraped only by its OAuth2-authenticated readiness
+job so Prometheus connectivity can be proven before activation. Flip a target to
+`active` only after its service-owned PR, private-network attachment, endpoint
+contract test, and cardinality review pass. MoneyBee remains excluded under the
+owner's standing no-change directive.
 
 Promotion is `feature/* -> development -> test -> staging -> production -> main`. Merging does not deploy or enable live application behavior.
+
+The dedicated staging runtime authority is
+`codestra/deploy/compose.staging.yaml`. It deploys only Prometheus, publishes no
+host port, preserves the Docker default seccomp profile, and joins exactly the
+shared observability network plus the isolated Middleware staging network. The
+Middleware target remains `activation=pending` until the approved read-only
+identity and runtime endpoint have both been independently proven. Activation
+requires the collector's sanitized evidence document, its exact SHA-256 in the
+activation contract, and a reviewed three-file transition containing only the
+target, contract, and newly added evidence document. Subsequent active-state CI
+validates the evidence without replaying that one-time transition.
+
+The collector binds its base URL to the exact configured Prometheus target,
+requires actual samples for every mandatory metric family, performs two
+authenticated scrapes at least 300 seconds apart, and accepts a sanitized
+Prometheus-only rollback proof from an absolute non-writable file. The committed
+evidence contains hashes and allowlisted results only; bearer tokens remain in
+mode-`0600` files outside Git and are never printed.
+Because monitoring JWTs live for no more than 300 seconds, the token issuer must
+atomically renew both token files during the soak. The collector rereads both
+files after the delay and rejects unchanged credentials before the second scrape
+or runtime-safety readback.
+
+While the target label is `pending`, the dedicated
+`middleware-intake-staging-readiness` scrape job exercises the same OAuth2
+client-secret exchange, private network, limits, and metric relabeling as the
+active job. Activation evidence must query the deployed Prometheus target API
+and `up` series and prove that this exact readiness target is UP with a
+successful HTTP 200 scrape. Evidence requests explicitly ignore inherited proxy
+settings so bearer tokens cannot leave the private network boundary.
+
+Rendering or deployment must use
+`codestra/scripts/deploy_staging_runtime.py`. Deployment mode rejects a dirty
+checkout, a non-SHA label, a SHA other than the checked-out head, and a head not
+merged into protected `origin/main`; it then recreates only the Prometheus service.
+The deployment waits up to 120 seconds for the source-defined Prometheus
+healthcheck and reports PASS only after the container is healthy.
 
 ## Immutable runtime preflight
 
