@@ -98,15 +98,15 @@ def validate_launcher_identity(
     launcher: Path = INSTALLED_LAUNCHER,
     checkout: Path = CHECKOUT,
 ) -> None:
-    if os.geteuid() != 0:
-        raise AuthorityError("staging source authority must run as root")
-    if not sys.flags.isolated:
-        raise AuthorityError("staging source authority requires /usr/bin/python3 -I")
     invoked = Path(os.path.abspath(__file__))
     if launcher == INSTALLED_LAUNCHER and invoked != launcher:
         raise AuthorityError("invoke the separately installed staging source authority")
     if invoked != invoked.resolve(strict=True):
         raise AuthorityError("installed staging source authority must not be symbolic")
+    if os.geteuid() != 0:
+        raise AuthorityError("staging source authority must run as root")
+    if not sys.flags.isolated:
+        raise AuthorityError("staging source authority requires /usr/bin/python3 -I")
     validate_protected_ancestry(launcher.parent, "installed launcher")
     launcher_metadata = _protected_metadata(
         launcher,
