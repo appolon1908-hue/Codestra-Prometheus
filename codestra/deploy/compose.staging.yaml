@@ -33,7 +33,7 @@ services:
     secrets:
       - source: middleware_staging_monitoring_client_secret
         target: middleware-staging-monitoring-client-secret
-        mode: 0444
+        mode: 0400
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     networks:

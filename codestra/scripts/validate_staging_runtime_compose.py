@@ -49,7 +49,7 @@ def main() -> None:
         {
             "source": "middleware_staging_monitoring_client_secret",
             "target": "middleware-staging-monitoring-client-secret",
-            "mode": 0o444,
+            "mode": 0o400,
         }
     ]
     assert not any(
@@ -80,7 +80,7 @@ def main() -> None:
     for required in (
         'SHA40 = re.compile(r"^[0-9a-f]{40}$")',
         'git_output("rev-parse", "HEAD") != source_sha',
-        '"fetch", "--quiet", "--no-tags", "origin", "development"',
+        '"+refs/heads/development:refs/remotes/origin/development"',
         '"merge-base", "--is-ancestor", source_sha, "origin/development"',
         '"--force-recreate"',
         '"--wait-timeout"',

@@ -43,7 +43,14 @@ def validate_source(source_sha: str, *, require_merged: bool) -> None:
         raise PreflightError("deployment checkout is not clean")
     if require_merged:
         refreshed = subprocess.run(
-            ["git", "fetch", "--quiet", "--no-tags", "origin", "development"],
+            [
+                "git",
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "origin",
+                "+refs/heads/development:refs/remotes/origin/development",
+            ],
             cwd=REPO,
             check=False,
             stdout=subprocess.DEVNULL,
