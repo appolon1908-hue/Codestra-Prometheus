@@ -37,7 +37,12 @@ jobs:
               'SOURCE_CONTRACT_PREPARED_NOT_DEPLOYED', 'GET` | `/-/ready',
               'GET` | `/-/healthy', 'GET` | `/metrics', 'GET` | `/api/v1/query',
               'GET` | `/api/v1/query_range', 'GET` | `/api/v1/rules',
-              'GET` | `/api/v1/alerts', 'ADMIN_ENDPOINTS_PUBLIC=NO',
+              'GET` | `/api/v1/alerts', 'ADMIN_MUTATION_METHODS_DENIED=PASS',
+              'POST_OR_PUT_/-/reload=DENIED_401_403_OR_NETWORK',
+              'POST_OR_PUT_/api/v1/admin/tsdb/delete_series=DENIED_401_403_OR_NETWORK',
+              'POST_OR_PUT_/api/v1/admin/tsdb/clean_tombstones=DENIED_401_403_OR_NETWORK',
+              'POST_OR_PUT_/api/v1/admin/tsdb/snapshot=DENIED_401_403_OR_NETWORK',
+              'ADMIN_DENIAL_ACCEPTS_405=NO', 'ADMIN_ENDPOINTS_PUBLIC=NO',
               'UNEXPECTED_404=0', 'SOURCE_RUNTIME_DRIFT=0',
               'This document does not deploy Prometheus',
           ]
