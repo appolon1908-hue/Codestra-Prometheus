@@ -61,10 +61,74 @@ def indented_block(text: str, header: str, indent: int) -> str | None:
     return None
 
 
+def anchored_mapping(text: str, alias: str) -> str | None:
+    """Return the source mapping carrying an exact YAML anchor."""
+
+    lines = text.splitlines()
+    pattern = re.compile(
+        rf"^(?P<indent>\s*)[^#\n]+:\s*&{re.escape(alias)}(?:\s+(?P<inline>.*))?$"
+    )
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if match is None:
+            continue
+        indent = len(match.group("indent"))
+        body = [match.group("inline") or ""]
+        for candidate in lines[index + 1 :]:
+            stripped = candidate.lstrip(" ")
+            candidate_indent = len(candidate) - len(stripped)
+            if stripped and candidate_indent <= indent:
+                break
+            body.append(candidate)
+        return "\n".join(body)
+    return None
+
+
+def mapping_declares_ports(mapping: str, compose: str) -> bool:
+    """Resolve YAML merge anchors and detect inherited host publications."""
+
+    if re.search(r"(?m)(?:^|[{,])\s*ports\s*:", mapping):
+        return True
+    if not re.search(r"(?m)^\s*<<\s*:", mapping):
+        return False
+
+    aliases = set(re.findall(r"\*([A-Za-z0-9_.-]+)", mapping))
+    if not aliases:
+        fail("Compose PostgreSQL Exporter uses an unsupported YAML merge")
+    for alias in aliases:
+        inherited = anchored_mapping(compose, alias)
+        if inherited is None:
+            fail(f"Compose PostgreSQL Exporter merge anchor is unresolved: {alias}")
+        if mapping_declares_ports(inherited, compose):
+            return True
+    return False
+
+
+def inline_service_record(services: str, service_name: str) -> dict[str, str]:
+    records: list[dict[str, str]] = []
+    for line in services.splitlines():
+        match = re.match(r"^\s*-\s*\{(?P<body>.*)\}\s*$", line)
+        if match is None:
+            continue
+        record: dict[str, str] = {}
+        for item in match.group("body").split(","):
+            key, separator, value = item.partition(":")
+            if not separator:
+                fail("services catalog contains a malformed inline record")
+            record[key.strip()] = value.strip().strip('"\'')
+        if record.get("service") == service_name:
+            records.append(record)
+    if len(records) != 1:
+        fail(f"services catalog must contain exactly one {service_name} record")
+    return records[0]
+
+
 def validate_postgres_operational_identity(
     targets: object,
     services: str,
     compose: str,
+    *,
+    postgres_repository: str,
 ) -> None:
     if not isinstance(targets, list):
         fail("production targets root must be an array")
@@ -83,20 +147,22 @@ def validate_postgres_operational_identity(
     if target["labels"].get("activation") != "active":
         fail("private PostgreSQL Exporter target must remain explicitly active")
 
-    service_records = [
-        line.strip()
-        for line in services.splitlines()
-        if "service: postgres-exporter" in line
-    ]
-    if len(service_records) != 1 or (
-        f'endpoint: "{PRIVATE_POSTGRES_IDENTITY}"' not in service_records[0]
-    ):
+    catalog_service = inline_service_record(services, "postgres-exporter")
+    if catalog_service.get("endpoint") != PRIVATE_POSTGRES_IDENTITY:
         fail("services catalog does not use the private exporter identity")
+    if catalog_service.get("repo") != postgres_repository:
+        fail("services catalog PostgreSQL Exporter repository drifted")
+    authority_match = re.search(
+        r"(?m)^\s{2}postgres_exporter:\s*(\S+)\s*$",
+        services,
+    )
+    if authority_match is None or authority_match.group(1) != postgres_repository:
+        fail("services catalog PostgreSQL Exporter authority drifted")
 
     service = indented_block(compose, "postgres-exporter", 2)
     if service is None:
         fail("Compose PostgreSQL Exporter service is missing")
-    if re.search(r"(?m)^    ports\s*:", service):
+    if mapping_declares_ports(service, compose):
         fail("PostgreSQL Exporter must not publish a host port")
     if not re.search(r'(?m)^    expose:\n      - "9187"\s*$', service):
         fail("PostgreSQL Exporter must expose port 9187 privately")
@@ -160,6 +226,7 @@ def validate() -> None:
         load_json(TARGETS),
         services,
         COMPOSE.read_text(encoding="utf-8"),
+        postgres_repository=postgres["repository"],
     )
 
     for path in (ROOT / "codestra").rglob("*"):

@@ -5,6 +5,10 @@ on:
   push:
     branches:
       - main
+      - development
+      - test
+      - staging
+      - production
 
 permissions:
   contents: read
