@@ -13,6 +13,7 @@ import yaml
 from deploy_staging_runtime import (
     PreflightError,
     validate_deployment_identity,
+    validate_isolated_interpreter,
     validate_protected_checkout,
 )
 
@@ -142,6 +143,7 @@ def main() -> None:
         'f"+refs/heads/main:{CANONICAL_MAIN_REF}"',
         '"merge-base",',
         "validate_protected_checkout()",
+        "validate_isolated_interpreter()",
         "secret != normalized",
         "not 16 <= len(normalized) <= 4096",
         'b"\\x00" in normalized',
@@ -168,6 +170,18 @@ def main() -> None:
             required_uid=os.geteuid(),
             ancestry_root=Path(temporary),
         )
+        (protected / "codestra" / "scripts").chmod(0o777)
+        try:
+            validate_protected_checkout(
+                protected,
+                required_uid=os.geteuid(),
+                ancestry_root=Path(temporary),
+            )
+        except PreflightError:
+            pass
+        else:
+            raise AssertionError("writable entrypoint parent was accepted")
+        (protected / "codestra" / "scripts").chmod(0o755)
         (deploy_source / "compose.staging.yaml").chmod(0o666)
         try:
             validate_protected_checkout(
@@ -198,6 +212,13 @@ def main() -> None:
             pass
         else:
             raise AssertionError("non-root deployment authority was accepted")
+    if not __import__("sys").flags.isolated:
+        try:
+            validate_isolated_interpreter()
+        except PreflightError:
+            pass
+        else:
+            raise AssertionError("non-isolated deployment interpreter was accepted")
     print("PROMETHEUS_STAGING_RUNTIME_SOURCE=PASS")
     print("SECCOMP_DISABLED=NO")
 

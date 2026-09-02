@@ -75,8 +75,14 @@ git -C /opt/codestra-observability/prometheus-authority fetch --no-tags origin r
 git -C /opt/codestra-observability/prometheus-authority checkout --detach <accepted-main-sha>
 chown -R root:root /opt/codestra-observability/prometheus-authority
 chmod -R go-w /opt/codestra-observability/prometheus-authority
-python3 /opt/codestra-observability/prometheus-authority/codestra/scripts/deploy_staging_runtime.py ...
+/usr/bin/python3 -I /opt/codestra-observability/prometheus-authority/codestra/scripts/deploy_staging_runtime.py ...
 ```
+
+The mandatory `-I` interpreter mode removes the checkout and caller working
+directory from Python's import path before the entrypoint starts. Deployment
+preflight also rejects writable `codestra/` or `codestra/scripts/` parent
+directories, so the entrypoint cannot be replaced or shadow standard-library
+imports before its recursive source checks run.
 
 Deployment mode must run as root so the UID-65534-owned client-secret file can
 be checked without broadening its ownership or mode. It waits up to 120 seconds
