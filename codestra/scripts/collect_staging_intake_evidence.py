@@ -208,8 +208,8 @@ def decode_jwt_metadata(token: str) -> dict[str, Any]:
     scopes = sorted(set(scopes_raw.split())) if isinstance(scopes_raw, str) else []
     audience = payload.get("aud")
     audiences = [audience] if isinstance(audience, str) else audience
-    if not isinstance(audiences, list) or "middleware-api" not in audiences:
-        raise EvidenceError("token audience does not include middleware-api")
+    if audiences != ["middleware-api"]:
+        raise EvidenceError("token audience must equal only middleware-api")
     if payload.get("azp") != "monitoring-readonly":
         raise EvidenceError("token azp is not monitoring-readonly")
     return {

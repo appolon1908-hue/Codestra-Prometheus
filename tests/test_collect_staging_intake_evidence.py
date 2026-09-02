@@ -34,6 +34,19 @@ def token(jti: str) -> str:
     return f"{header}.{payload}.signature-{jti}"
 
 
+def token_with_audiences(jti: str, audiences: list[str]) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(json.dumps({
+        "iat": 100,
+        "exp": 400,
+        "azp": "monitoring-readonly",
+        "aud": audiences,
+        "scope": "metrics.read",
+        "jti": jti,
+    }).encode()).decode().rstrip("=")
+    return f"{header}.{payload}.signature-{jti}"
+
+
 def metrics_payload() -> bytes:
     rows: list[str] = []
     for family in sorted(collector.EXPECTED_METRIC_FAMILIES):
@@ -175,6 +188,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class CollectorTests(unittest.TestCase):
+    def test_monitoring_token_rejects_extra_audience(self):
+        with self.assertRaisesRegex(
+            collector.EvidenceError,
+            "audience must equal only middleware-api",
+        ):
+            collector.decode_jwt_metadata(
+                token_with_audiences(
+                    "extra-audience",
+                    ["middleware-api", "marketing-provider-adapter"],
+                )
+            )
+
     def test_unchanged_monitoring_tokens_are_rejected_after_soak(self):
         metrics = collector.decode_jwt_metadata(token("metrics"))
         health = collector.decode_jwt_metadata(token("health"))
