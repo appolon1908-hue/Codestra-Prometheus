@@ -1,0 +1,47 @@
+name: Apply Prometheus review patch on remediation PR
+
+on:
+  pull_request:
+    branches: [staging]
+    paths:
+      - "codestra/scripts/apply_production_review_patch.py"
+      - ".github/workflows/apply-prometheus-review-pr.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact remediation head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 1
+
+      - name: Apply idempotent source patch
+        run: |
+          set -Eeuo pipefail
+          python3 codestra/scripts/apply_production_review_patch.py
+          git diff --check
+
+      - name: Commit patch when required
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -Eeuo pipefail
+          if git diff --quiet; then
+            echo "PROMETHEUS_REVIEW_PATCH_ALREADY_APPLIED=1"
+            exit 0
+          fi
+          git config user.name "codestra-production-review"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add \
+            codestra/scripts/collect_staging_intake_evidence.py \
+            codestra/prometheus/prometheus.yml \
+            .github/workflows/controlled-intake-staging-activation-gate.yml
+          git commit -m "fix(prometheus): bind production evidence and target discovery"
+          git push origin "HEAD:$HEAD_REF"
