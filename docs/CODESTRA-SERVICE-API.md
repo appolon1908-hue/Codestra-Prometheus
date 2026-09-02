@@ -47,7 +47,6 @@ Business identity is deployment-controlled. Caller-supplied business identity, c
 
 The control plane reads source revision and image digest only from deployment environment variables. A valid release requires a 40-character Git SHA and `sha256:<64 lowercase hex>` image digest. This source change does not deploy the service, activate ingestion/scrapes/probes/alerts, issue credentials, or enable any business, communications, financial, or trading mutation.
 
-
 ## Contract authority handoff
 
 - Canonical schema repository: `appolon1908-hue/Codestra-Telemetry`
