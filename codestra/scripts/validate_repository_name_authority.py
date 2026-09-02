@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ALIASES = ROOT / "codestra" / "catalog" / "repository-name-aliases.v1.json"
 SERVICES = ROOT / "codestra" / "catalog" / "services.yml"
+TARGETS = ROOT / "codestra" / "prometheus" / "targets" / "production.json"
+COMPOSE = ROOT / "codestra" / "compose.yaml"
 CURRENT_REPOSITORY = "appolon1908-hue/Frontend-Resturant-"
 TARGET_REPOSITORY = "appolon1908-hue/restaurant-frontend"
 PRIVATE_POSTGRES_IDENTITY = "postgres-exporter:9187"
@@ -21,11 +24,63 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-def validate() -> None:
+def load_json(path: Path) -> object:
     try:
-        data = json.loads(ALIASES.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        fail(f"invalid repository alias manifest: {exc}")
+        fail(f"invalid JSON {path.relative_to(ROOT)}: {exc}")
+
+
+def validate_postgres_operational_identity(
+    targets: object,
+    services: str,
+    compose: str,
+) -> None:
+    if not isinstance(targets, list):
+        fail("production targets root must be an array")
+    postgres_targets = [
+        item
+        for item in targets
+        if isinstance(item, dict)
+        and isinstance(item.get("labels"), dict)
+        and item["labels"].get("service") == "postgres-exporter"
+    ]
+    if len(postgres_targets) != 1:
+        fail("production targets must contain one PostgreSQL Exporter target")
+    target = postgres_targets[0]
+    if target.get("targets") != [PRIVATE_POSTGRES_IDENTITY]:
+        fail("production target does not use the private exporter identity")
+    if target["labels"].get("activation") != "active":
+        fail("private PostgreSQL Exporter target must remain explicitly active")
+
+    service_records = [
+        line.strip()
+        for line in services.splitlines()
+        if "service: postgres-exporter" in line
+    ]
+    if len(service_records) != 1 or (
+        f'endpoint: "{PRIVATE_POSTGRES_IDENTITY}"' not in service_records[0]
+    ):
+        fail("services catalog does not use the private exporter identity")
+
+    match = re.search(
+        r"(?ms)^  postgres-exporter:\n"
+        r"(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|^networks:)",
+        compose,
+    )
+    if match is None:
+        fail("Compose PostgreSQL Exporter service is missing")
+    service = match.group("body")
+    if re.search(r"(?m)^    ports:\s*$", service):
+        fail("PostgreSQL Exporter must not publish a host port")
+    if not re.search(r'(?m)^    expose:\n      - "9187"\s*$', service):
+        fail("PostgreSQL Exporter must expose port 9187 privately")
+    if not re.search(r"(?m)^          - postgres-exporter\s*$", service):
+        fail("Compose private exporter alias is missing")
+
+
+def validate() -> None:
+    data = load_json(ALIASES)
 
     if data.get("schema_version") != "1.0":
         fail("repository alias schema_version must be 1.0")
@@ -41,10 +96,15 @@ def validate() -> None:
         fail("PostgreSQL Exporter principal repository is incorrect")
     if postgres.get("public_hostname") is not None:
         fail("PostgreSQL Exporter may not have a public hostname")
+    if postgres.get("forbidden_public_hostname") != FORBIDDEN_POSTGRES_HOST:
+        fail("retired PostgreSQL Exporter hostname must remain forbidden")
     if postgres.get("private_service_identity") != PRIVATE_POSTGRES_IDENTITY:
         fail("PostgreSQL Exporter private identity is incorrect")
     if postgres.get("exposure") != "PRIVATE_INTERNAL_ONLY":
         fail("PostgreSQL Exporter must remain private/internal only")
+    for field in ("public_route_allowed", "host_public_port_allowed"):
+        if postgres.get(field) is not False:
+            fail(f"PostgreSQL Exporter {field} must remain false")
 
     mappings = data.get("mappings", [])
     if mappings != [
@@ -63,6 +123,12 @@ def validate() -> None:
     if TARGET_REPOSITORY in services:
         fail("services catalog uses the target restaurant frontend before cutover")
 
+    validate_postgres_operational_identity(
+        load_json(TARGETS),
+        services,
+        COMPOSE.read_text(encoding="utf-8"),
+    )
+
     for path in (ROOT / "codestra").rglob("*"):
         if not path.is_file() or path.suffix.lower() in {
             ".png",
@@ -73,8 +139,10 @@ def validate() -> None:
             ".woff2",
         }:
             continue
+        if path.resolve() == ALIASES.resolve():
+            continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if FORBIDDEN_POSTGRES_HOST in text:
+        if FORBIDDEN_POSTGRES_HOST in text.lower():
             fail(
                 "retired PostgreSQL Exporter public hostname remains in active "
                 f"Prometheus source: {path.relative_to(ROOT)}"

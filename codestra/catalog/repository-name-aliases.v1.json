@@ -7,8 +7,11 @@
     "repository_id": 1350839865,
     "repository": "appolon1908-hue/Codestra-Postgres-Exporter",
     "public_hostname": null,
+    "forbidden_public_hostname": "pgex.codestra.media",
     "private_service_identity": "postgres-exporter:9187",
-    "exposure": "PRIVATE_INTERNAL_ONLY"
+    "exposure": "PRIVATE_INTERNAL_ONLY",
+    "public_route_allowed": false,
+    "host_public_port_allowed": false
   },
   "mappings": [
     {
