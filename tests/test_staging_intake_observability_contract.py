@@ -50,11 +50,11 @@ def runtime_evidence() -> dict[str, object]:
         "middleware_release": {
             "source_sha": source.EXPECTED_SOURCE,
             "image_digest": source.EXPECTED_DIGEST,
-            "schema_head": "0003_immutable_event_ledger",
+            "schema_head": "0008_durable_communications",
         },
         "supply_chain": {
             "release_manifest_verification": "PASS_IN_SIGNED_RELEASE_WORKFLOW",
-            "signed_release_artifact_sha256": "sha256:13ec5eb0c4a8e26cc342639f4ff5408d81f3de2b0cfefa80c455e65f14f9fbf6",
+            "signed_release_artifact_sha256": "sha256:56fc7bd5cca57df0bfd04e27eb3e294bd160a8071e4e8ae1974addb6d040f46e",
             "release_workflow_identity": "https://github.com/appolon1908-hue/Middleware-/.github/workflows/release.yml@refs/heads/main",
             "release_oidc_issuer": "https://token.actions.githubusercontent.com",
             "image_signature": "sigstore-keyless",
@@ -153,7 +153,7 @@ def runtime_evidence() -> dict[str, object]:
             "release": {
                 "source_sha": source.EXPECTED_SOURCE,
                 "image_digest": source.EXPECTED_DIGEST,
-                "schema_head": "0003_immutable_event_ledger",
+                "schema_head": "0008_durable_communications",
                 "build_time": "2026-09-02T00:00:00Z",
             },
             "persistence": {"in_memory": False},

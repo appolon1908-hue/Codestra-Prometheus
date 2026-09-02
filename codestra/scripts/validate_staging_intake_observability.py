@@ -10,8 +10,8 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 CODESTRA = REPO / "codestra"
-EXPECTED_SOURCE = "f6748a58f8d2590520a4f28776770957061cdea1"
-EXPECTED_DIGEST = "sha256:695fa3ce3f50ba4d0ae0784976b946a0a683ca731155e4bd3bd9e90a4670b820"
+EXPECTED_SOURCE = "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
+EXPECTED_DIGEST = "sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4"
 STAGING_TOKEN_URL = "https://auth-staging.codestra.co/realms/codestra/protocol/openid-connect/token"
 PRODUCTION_TOKEN_URL = "https://auth.codestra.co/realms/codestra/protocol/openid-connect/token"
 TARGETS_PATH = CODESTRA / "prometheus/targets/staging.json"
@@ -315,7 +315,7 @@ def validate_runtime_evidence(contract: dict[str, object]) -> None:
     assert safety["runtime_profile_id"] == "codestra-middleware-staging-v1"
     assert safety["release"]["source_sha"] == EXPECTED_SOURCE
     assert safety["release"]["image_digest"] == EXPECTED_DIGEST
-    assert safety["release"]["schema_head"] == "0003_immutable_event_ledger"
+    assert safety["release"]["schema_head"] == "0008_durable_communications"
     assert isinstance(safety["release"]["build_time"], str)
     assert safety["release"]["build_time"].strip()
     assert safety["persistence"] == {"in_memory": False}
@@ -348,7 +348,7 @@ def validate_reviewed_git_evidence(contract: dict[str, object]) -> None:
     assert evidence["authority_path"] == "integration/staging-activation-contract-v1.json"
     assert evidence["middleware_source_sha"] == EXPECTED_SOURCE
     assert evidence["middleware_image_digest"] == EXPECTED_DIGEST
-    assert evidence["migration"] == "0003_immutable_event_ledger"
+    assert evidence["migration"] == "0008_durable_communications"
     assert evidence["staging_identity"] == "https://auth-staging.codestra.co"
     assert evidence["production_identity_enabled"] is False
     assert evidence["external_effects_enabled"] is False
@@ -443,12 +443,12 @@ def validate(expected_activation: str = "pending") -> None:
         "codestra_business": "platform",
         "environment": "staging",
         "region": "hetzner-eu",
-        "deployment": "middleware-f6748a58",
+        "deployment": "middleware-9a96ff16",
         "server": "codestra-staging-private-01",
         "application": "integration",
         "service": "middleware-intake",
         "tenant_scope": "aggregate",
-        "release_id": "f6748a58f8d2-695fa3ce3f50",
+        "release_id": "9a96ff1651a3-01a61e6c9761",
     }
 
     contract = json.loads(CONTRACT_PATH.read_text())

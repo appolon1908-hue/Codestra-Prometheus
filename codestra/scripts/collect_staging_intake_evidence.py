@@ -654,7 +654,7 @@ def validate_runtime_safety(payload: bytes, expected_source: str, expected_diges
         raise EvidenceError("runtime source SHA does not match immutable release")
     if release["image_digest"] != expected_digest:
         raise EvidenceError("runtime image digest does not match immutable release")
-    if release["schema_head"] != "0003_immutable_event_ledger":
+    if release["schema_head"] != "0008_durable_communications":
         raise EvidenceError("runtime schema head is not certified")
     if not isinstance(release["build_time"], str) or not release["build_time"].strip():
         raise EvidenceError("runtime build time is missing")
@@ -840,7 +840,7 @@ def main() -> int:
         "generated_at": datetime.now(UTC).isoformat(),
         "environment": "staging",
         "target": {"hostname": host, "prometheus_target": prometheus_target, "private_network_only": True, "methods_used": ["GET"], "business_writes_performed": False},
-        "middleware_release": {"source_sha": args.expected_source_sha, "image_digest": args.expected_image_digest, "schema_head": "0003_immutable_event_ledger"},
+        "middleware_release": {"source_sha": args.expected_source_sha, "image_digest": args.expected_image_digest, "schema_head": "0008_durable_communications"},
         "supply_chain": supply_chain,
         "token_evidence": {
             "metrics": refreshed_metrics_metadata,

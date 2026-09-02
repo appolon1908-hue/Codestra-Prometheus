@@ -49,7 +49,7 @@
     "Codestra-Blackbox-Exporter": "22c41a93063d5a54911803f5c8b77c2698bd69b9",
     "Superset": "eedd81e24570231717c8293ba7fc4149b37419d0",
     "Codestra-OpenBao": "80381888f12723a6ebff88b8f1080d193d6f4e9f",
-    "Middleware-": "f6748a58f8d2590520a4f28776770957061cdea1"
+    "Middleware-": "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
   },
   "runtime_effects": {
     "deployment_performed": false,

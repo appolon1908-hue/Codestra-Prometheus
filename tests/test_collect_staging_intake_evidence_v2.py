@@ -29,8 +29,8 @@ wrapper = importlib.util.module_from_spec(wrapper_spec)
 assert wrapper_spec and wrapper_spec.loader
 wrapper_spec.loader.exec_module(wrapper)
 
-SOURCE = "f6748a58f8d2590520a4f28776770957061cdea1"
-DIGEST = "sha256:695fa3ce3f50ba4d0ae0784976b946a0a683ca731155e4bd3bd9e90a4670b820"
+SOURCE = "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
+DIGEST = "sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4"
 
 
 def token(scope: str, jti: str) -> str:
@@ -61,7 +61,7 @@ def metrics_payload() -> bytes:
             labels = '{codestra_business="platform",application="integration",service="middleware-api",environment="staging"}'
         rows.append(f"{family}{labels} 0")
     rows.append(
-        f'codestra_release_info{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"}} 1'
+        f'codestra_release_info{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0008_durable_communications",version="0.1.0"}} 1'
     )
     return ("\n".join(rows) + "\n").encode()
 
@@ -94,8 +94,8 @@ def safety_document() -> dict[str, object]:
         "release": {
             "source_sha": SOURCE,
             "image_digest": DIGEST,
-            "schema_head": "0003_immutable_event_ledger",
-            "build_time": "2026-08-30T13:24:37Z",
+            "schema_head": "0008_durable_communications",
+            "build_time": "2026-09-02T17:41:48Z",
         },
         "persistence": {"in_memory": False},
         "dispatch": {

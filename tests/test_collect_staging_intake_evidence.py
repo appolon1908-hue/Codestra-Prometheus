@@ -17,8 +17,8 @@ collector = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 spec.loader.exec_module(collector)
 
-SOURCE = "f6748a58f8d2590520a4f28776770957061cdea1"
-DIGEST = "sha256:695fa3ce3f50ba4d0ae0784976b946a0a683ca731155e4bd3bd9e90a4670b820"
+SOURCE = "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
+DIGEST = "sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4"
 
 
 def token(jti: str) -> str:
@@ -44,7 +44,7 @@ def metrics_payload() -> bytes:
         if family.startswith(("lead_", "survey_", "intake_")):
             labels = '{codestra_business="platform",application="integration",service="middleware-api",environment="staging"}'
         rows.append(f"{family}{labels} 0")
-    rows.append(f'codestra_release_info{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"}} 1')
+    rows.append(f'codestra_release_info{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0008_durable_communications",version="0.1.0"}} 1')
     return ("\n".join(rows) + "\n").encode()
 
 
@@ -76,8 +76,8 @@ def safety_document() -> dict[str, object]:
         "release": {
             "source_sha": SOURCE,
             "image_digest": DIGEST,
-            "schema_head": "0003_immutable_event_ledger",
-            "build_time": "2026-08-30T13:24:37Z",
+            "schema_head": "0008_durable_communications",
+            "build_time": "2026-09-02T17:41:48Z",
         },
         "persistence": {"in_memory": False},
         "dispatch": {"outbox_enabled": False, "nats_mode": "disabled", "temporal_worker_mode": "disabled"},
@@ -202,7 +202,7 @@ class CollectorTests(unittest.TestCase):
             collector.analyze_metrics(bad, max_series=5000, max_family_series=500)
 
     def test_identity_labels_are_format_checked_and_scanned(self):
-        bad = metrics_payload() + b'codestra_release_info{service="middleware-api",component="api",environment="staging",release_sha="operator@example.invalid",image_digest="sha256:695fa3ce3f50ba4d0ae0784976b946a0a683ca731155e4bd3bd9e90a4670b820",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"} 1\n'
+        bad = metrics_payload() + b'codestra_release_info{service="middleware-api",component="api",environment="staging",release_sha="operator@example.invalid",image_digest="sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4",schema_or_migration_head="0008_durable_communications",version="0.1.0"} 1\n'
         with self.assertRaises(collector.EvidenceError):
             collector.analyze_metrics(bad, max_series=5000, max_family_series=500)
 
