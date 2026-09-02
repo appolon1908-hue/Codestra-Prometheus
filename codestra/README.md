@@ -28,9 +28,12 @@ shared observability network plus the isolated Middleware staging network. The
 Middleware target remains `activation=pending` until the approved read-only
 identity and runtime endpoint have both been independently proven. Activation
 requires the collector's sanitized evidence document, its exact SHA-256 in the
-activation contract, and a reviewed three-file transition containing only the
-target, contract, and newly added evidence document. Subsequent active-state CI
-validates the evidence without replaying that one-time transition.
+activation contract, and its Ed25519 signature from the root-protected evidence
+key on `37.27.128.39`. The reviewed four-file transition contains only the
+target, contract, newly added evidence document, and detached signature. The
+trusted public key is locked in the already-reviewed base and cannot change in
+an activation PR. Subsequent active-state CI verifies the signature and evidence
+without replaying that one-time transition.
 
 The collector binds its base URL to the exact configured Prometheus target,
 requires actual samples for every mandatory metric family, performs two
@@ -42,6 +45,13 @@ Because monitoring JWTs live for no more than 300 seconds, the token issuer must
 atomically renew both token files during the soak. The collector rereads both
 files after the delay and rejects unchanged credentials before the second scrape
 or runtime-safety readback.
+
+The v2 collector requires `--signing-key-file` and `--signature-output`. The
+private key must be root-owned with no group/other access and must match
+`integration/staging-evidence-signing-public.pem`; it stays outside Git. The
+collector creates a mode-`0600` detached signature and refuses an existing or
+symbolic signature output. An ordinary evidence checksum is never sufficient
+for activation without this signature.
 
 While the target label is `pending`, the dedicated
 `middleware-intake-staging-readiness` scrape job exercises the same OAuth2

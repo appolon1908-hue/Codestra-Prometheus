@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import sys
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -195,6 +197,7 @@ def activate_contract(contract: dict[str, object], evidence_checksum: str) -> No
         {
             "artifact_path": "integration/staging-runtime-evidence-v1.json",
             "checksum": evidence_checksum,
+            "signature_path": "integration/staging-runtime-evidence-v1.sig",
             "state": "VERIFIED_RUNTIME_EVIDENCE",
         }
     )
@@ -215,24 +218,31 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
             source.TARGETS_PATH,
             source.CONTRACT_PATH,
             source.EVIDENCE_PATH,
+            source.EVIDENCE_SIGNATURE_PATH,
+            source.EVIDENCE_PUBLIC_KEY_PATH,
             source.PROMETHEUS_CONFIG_PATH,
             source.PRIMARY_PROMETHEUS_CONFIG_PATH,
         )
+        self.original_signing_key_id = source.EXPECTED_EVIDENCE_SIGNING_KEY_ID
 
     def tearDown(self) -> None:
         (
             source.TARGETS_PATH,
             source.CONTRACT_PATH,
             source.EVIDENCE_PATH,
+            source.EVIDENCE_SIGNATURE_PATH,
+            source.EVIDENCE_PUBLIC_KEY_PATH,
             source.PROMETHEUS_CONFIG_PATH,
             source.PRIMARY_PROMETHEUS_CONFIG_PATH,
         ) = self.original_paths
+        source.EXPECTED_EVIDENCE_SIGNING_KEY_ID = self.original_signing_key_id
 
     def prepare_active_fixture(
         self,
         root: Path,
         *,
         write_evidence: bool,
+        write_signature: bool = True,
         evidence_document: dict[str, object] | None = None,
     ) -> None:
         targets = json.loads(self.original_paths[0].read_text())
@@ -254,13 +264,81 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
             contract, "sha256:" + hashlib.sha256(encoded).hexdigest()
         )
         contract_path = root / "staging-activation-contract-v1.json"
+        signature_path = root / "staging-runtime-evidence-v1.sig"
+        public_key_path = root / "staging-evidence-signing-public.pem"
+        private_key_path = root / "staging-evidence-signing-private.pem"
+        subprocess.run(
+            [
+                source.OPENSSL,
+                "genpkey",
+                "-algorithm",
+                "ED25519",
+                "-out",
+                private_key_path,
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                source.OPENSSL,
+                "pkey",
+                "-in",
+                private_key_path,
+                "-pubout",
+                "-out",
+                public_key_path,
+            ],
+            check=True,
+        )
+        public_der = subprocess.run(
+            [
+                source.OPENSSL,
+                "pkey",
+                "-in",
+                private_key_path,
+                "-pubout",
+                "-outform",
+                "DER",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+        ).stdout
+        signing_key_id = "sha256:" + hashlib.sha256(public_der).hexdigest()
+        contract["staging_evidence"]["signing_key_id"] = signing_key_id
         contract_path.write_text(json.dumps(contract))
+        signing_input = evidence_path if write_evidence else root / "evidence-to-sign.json"
         if write_evidence:
             evidence_path.write_bytes(encoded)
+        else:
+            signing_input.write_bytes(encoded)
+        signature_raw_path = root / "staging-runtime-evidence-v1.sig.raw"
+        subprocess.run(
+            [
+                source.OPENSSL,
+                "pkeyutl",
+                "-sign",
+                "-inkey",
+                private_key_path,
+                "-rawin",
+                "-in",
+                signing_input,
+                "-out",
+                signature_raw_path,
+            ],
+            check=True,
+        )
+        if write_signature:
+            signature_path.write_text(
+                base64.b64encode(signature_raw_path.read_bytes()).decode("ascii")
+                + "\n"
+            )
 
         source.TARGETS_PATH = target_path
         source.CONTRACT_PATH = contract_path
         source.EVIDENCE_PATH = evidence_path
+        source.EVIDENCE_SIGNATURE_PATH = signature_path
+        source.EVIDENCE_PUBLIC_KEY_PATH = public_key_path
+        source.EXPECTED_EVIDENCE_SIGNING_KEY_ID = signing_key_id
 
     def test_pending_source_state_passes_without_runtime_evidence(self) -> None:
         source.validate("pending")
@@ -268,7 +346,7 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
     def test_pending_source_rejects_weakened_metric_labeldrop_policy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prometheus-staging.yml"
-            config = yaml.safe_load(self.original_paths[3].read_text())
+            config = yaml.safe_load(self.original_paths[5].read_text())
             jobs = {item["job_name"]: item for item in config["scrape_configs"]}
             jobs["middleware-intake-staging-readiness"]["metric_relabel_configs"] = []
             path.write_text(yaml.safe_dump(config, sort_keys=False))
@@ -279,7 +357,7 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
     def test_pending_source_rejects_primary_staging_scrape_overlap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prometheus.yml"
-            config = yaml.safe_load(self.original_paths[4].read_text())
+            config = yaml.safe_load(self.original_paths[6].read_text())
             jobs = {item["job_name"]: item for item in config["scrape_configs"]}
             jobs["codestra-targets"]["relabel_configs"] = [
                 item
@@ -312,6 +390,34 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
             self.prepare_active_fixture(Path(directory), write_evidence=True)
             source.validate("active")
             activation.validate()
+
+    def test_active_state_rejects_missing_host_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.prepare_active_fixture(
+                Path(directory),
+                write_evidence=True,
+                write_signature=False,
+            )
+            with self.assertRaises(AssertionError):
+                source.validate("active")
+
+    def test_active_state_rejects_self_consistent_unsigned_forgery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.prepare_active_fixture(root, write_evidence=True)
+            forged = runtime_evidence()
+            forged["generated_at"] = "2026-09-02T01:00:00+00:00"
+            encoded = (
+                json.dumps(forged, sort_keys=True, separators=(",", ":")) + "\n"
+            ).encode()
+            source.EVIDENCE_PATH.write_bytes(encoded)
+            contract = json.loads(source.CONTRACT_PATH.read_text())
+            contract["staging_evidence"]["checksum"] = (
+                "sha256:" + hashlib.sha256(encoded).hexdigest()
+            )
+            source.CONTRACT_PATH.write_text(json.dumps(contract))
+            with self.assertRaises(AssertionError):
+                source.validate("active")
 
     def test_active_state_rejects_incomplete_auth_checks(self) -> None:
         evidence = runtime_evidence()

@@ -8,10 +8,14 @@ from the other protected endpoint before canonical evidence is accepted.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
+import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,6 +24,11 @@ import collect_staging_intake_evidence as collector
 
 METRICS_SCOPE = "metrics.read"
 HEALTH_SCOPE = "health.read"
+EXPECTED_SIGNING_KEY_ID = (
+    "sha256:926880e6fec1981b93492dbe9004f3381367500f4df4ca3ffaa1c944572dcc20"
+)
+OPENSSL = "/usr/bin/openssl"
+WRAPPER_ONLY_OPTIONS = {"--signing-key-file", "--signature-output"}
 
 
 def exact_scope_metadata(token: str, expected_scope: str) -> dict[str, Any]:
@@ -60,8 +69,85 @@ def parse_wrapper_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--health-token-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--checksum-output", type=Path, required=True)
+    parser.add_argument("--signing-key-file", type=Path, required=True)
+    parser.add_argument("--signature-output", type=Path, required=True)
     args, _ = parser.parse_known_args(argv)
     return args
+
+
+def collector_argv(argv: list[str]) -> list[str]:
+    """Remove only wrapper-owned options before invoking the base collector."""
+    filtered: list[str] = []
+    index = 0
+    while index < len(argv):
+        item = argv[index]
+        if item in WRAPPER_ONLY_OPTIONS:
+            if index + 1 >= len(argv):
+                raise collector.EvidenceError(f"{item} requires a value")
+            index += 2
+            continue
+        if any(item.startswith(option + "=") for option in WRAPPER_ONLY_OPTIONS):
+            index += 1
+            continue
+        filtered.append(item)
+        index += 1
+    return filtered
+
+
+def validate_signing_key(path: Path) -> Path:
+    if path.is_symlink() or not path.is_file():
+        raise collector.EvidenceError("evidence signing key must be a regular file")
+    metadata = path.stat()
+    if metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise collector.EvidenceError(
+            "evidence signing key must be root-owned with no group/other access"
+        )
+    resolved = path.resolve(strict=True)
+    command = subprocess.run(
+        [OPENSSL, "pkey", "-in", str(resolved), "-pubout", "-outform", "DER"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if command.returncode != 0 or not command.stdout:
+        raise collector.EvidenceError("evidence signing key is not a valid private key")
+    key_id = "sha256:" + hashlib.sha256(command.stdout).hexdigest()
+    if key_id != EXPECTED_SIGNING_KEY_ID:
+        raise collector.EvidenceError("evidence signing key does not match source authority")
+    return resolved
+
+
+def sign_evidence(evidence_path: Path, signing_key: Path, output: Path) -> None:
+    parent = output.parent.resolve(strict=True)
+    parent_metadata = parent.stat()
+    if parent_metadata.st_uid != 0 or stat.S_IMODE(parent_metadata.st_mode) & 0o022:
+        raise collector.EvidenceError(
+            "signature output parent must be root-owned and not group/other writable"
+        )
+    if output.is_symlink() or output.exists():
+        raise collector.EvidenceError("signature output already exists or is symbolic")
+    command = subprocess.run(
+        [
+            OPENSSL,
+            "pkeyutl",
+            "-sign",
+            "-inkey",
+            str(signing_key),
+            "-rawin",
+            "-in",
+            str(evidence_path.resolve(strict=True)),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if command.returncode != 0 or len(command.stdout) != 64:
+        raise collector.EvidenceError("runtime evidence signature generation failed")
+    encoded = base64.b64encode(command.stdout).decode("ascii") + "\n"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    descriptor = os.open(output, flags, 0o600)
+    with os.fdopen(descriptor, "w", encoding="ascii") as stream:
+        stream.write(encoded)
 
 
 def main() -> int:
@@ -76,9 +162,14 @@ def main() -> int:
 
     isolation = scope_isolation_checks(base_url, metrics_token, health_token)
 
+    original_argv = sys.argv
     captured = io.StringIO()
-    with contextlib.redirect_stdout(captured):
-        result = collector.main()
+    try:
+        sys.argv = [original_argv[0], *collector_argv(original_argv[1:])]
+        with contextlib.redirect_stdout(captured):
+            result = collector.main()
+    finally:
+        sys.argv = original_argv
     if result != 0:
         raise collector.EvidenceError("base evidence collector did not pass")
 
@@ -123,8 +214,12 @@ def main() -> int:
     args.checksum_output.parent.mkdir(parents=True, exist_ok=True)
     args.checksum_output.write_text(checksum + "\n", encoding="utf-8")
     os.chmod(args.checksum_output, 0o600)
+    signing_key = validate_signing_key(args.signing_key_file)
+    sign_evidence(args.output, signing_key, args.signature_output)
     print("STAGING_INTAKE_EVIDENCE_V2=PASS")
     print(f"EVIDENCE_SHA256={checksum}")
+    print("EVIDENCE_SIGNATURE=PASS")
+    print(f"EVIDENCE_SIGNING_KEY_ID={EXPECTED_SIGNING_KEY_ID}")
     return 0
 
 

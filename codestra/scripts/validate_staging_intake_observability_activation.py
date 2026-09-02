@@ -15,6 +15,7 @@ REPO = Path(__file__).resolve().parents[2]
 TARGET = "codestra/prometheus/targets/staging.json"
 CONTRACT = "integration/staging-activation-contract-v1.json"
 EVIDENCE = "integration/staging-runtime-evidence-v1.json"
+EVIDENCE_SIGNATURE = "integration/staging-runtime-evidence-v1.sig"
 
 
 def git(*args: str) -> str:
@@ -37,7 +38,9 @@ def validate_activation_diff(base_sha: str) -> None:
         for line in git("diff", "--name-only", f"{base_sha}..{head_sha}").splitlines()
         if line
     ]
-    assert sorted(changed) == sorted([TARGET, CONTRACT, EVIDENCE]), changed
+    assert sorted(changed) == sorted(
+        [TARGET, CONTRACT, EVIDENCE, EVIDENCE_SIGNATURE]
+    ), changed
     statuses = {
         path: status
         for status, path in (
@@ -47,7 +50,12 @@ def validate_activation_diff(base_sha: str) -> None:
             ).splitlines()
         )
     }
-    assert statuses == {TARGET: "M", CONTRACT: "M", EVIDENCE: "A"}, statuses
+    assert statuses == {
+        TARGET: "M",
+        CONTRACT: "M",
+        EVIDENCE: "A",
+        EVIDENCE_SIGNATURE: "A",
+    }, statuses
     diff = git("diff", "--unified=0", f"{base_sha}..{head_sha}", "--", TARGET)
     removed = [line for line in diff.splitlines() if line.startswith("-") and not line.startswith("---")]
     added = [line for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")]
@@ -58,13 +66,14 @@ def validate_activation_diff(base_sha: str) -> None:
     after = json.loads(source.CONTRACT_PATH.read_text())
     assert before["staging_evidence"]["artifact_path"] is None
     assert before["staging_evidence"]["checksum"] is None
+    assert before["staging_evidence"]["signature_path"] is None
     assert before["staging_evidence"]["state"] == "PENDING_RUNTIME_EXECUTION"
     assert before["activation_policy"]["prometheus_target_current_state"] == "pending"
     assert before["activation_policy"]["prometheus_target_allowed_next_state"] == "active"
     assert all(value is False for value in before["runtime_effects"].values())
 
     permitted = copy.deepcopy(before)
-    for key in ("artifact_path", "checksum", "state"):
+    for key in ("artifact_path", "checksum", "signature_path", "state"):
         permitted["staging_evidence"][key] = after["staging_evidence"][key]
     for key in (
         "prometheus_target_current_state",

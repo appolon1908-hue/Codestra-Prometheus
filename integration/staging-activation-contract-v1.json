@@ -53,6 +53,11 @@
     "collector_branch": "main",
     "artifact_path": null,
     "checksum": null,
+    "signature_path": null,
+    "signature_algorithm": "ed25519",
+    "signing_public_key_path": "integration/staging-evidence-signing-public.pem",
+    "signing_key_id": "sha256:926880e6fec1981b93492dbe9004f3381367500f4df4ca3ffaa1c944572dcc20",
+    "signing_authority": "codestra-observability-host-37.27.128.39-root-protected-collector",
     "state": "PENDING_RUNTIME_EXECUTION",
     "must_verify": [
       "exact_middleware_source_sha",
@@ -69,7 +74,8 @@
       "no_pii_or_secret_exposure",
       "all_external_effects_disabled",
       "staging_soak",
-      "rollback_proof"
+      "rollback_proof",
+      "host_evidence_signature"
     ]
   },
   "reviewed_git_activation_evidence": {

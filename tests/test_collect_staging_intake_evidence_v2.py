@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
 import os
 import sys
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -31,6 +33,26 @@ wrapper_spec.loader.exec_module(wrapper)
 
 SOURCE = "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
 DIGEST = "sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4"
+
+
+def signing_key(root: Path) -> tuple[Path, Path, str]:
+    private = root / "evidence-private.pem"
+    public = root / "evidence-public.pem"
+    subprocess.run(
+        [wrapper.OPENSSL, "genpkey", "-algorithm", "ED25519", "-out", private],
+        check=True,
+    )
+    os.chmod(private, 0o400)
+    subprocess.run(
+        [wrapper.OPENSSL, "pkey", "-in", private, "-pubout", "-out", public],
+        check=True,
+    )
+    public_der = subprocess.run(
+        [wrapper.OPENSSL, "pkey", "-in", private, "-pubout", "-outform", "DER"],
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    return private, public, "sha256:" + hashlib.sha256(public_der).hexdigest()
 
 
 def token(scope: str, jti: str) -> str:
@@ -251,6 +273,8 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                 os.chmod(health, 0o600)
                 output = root / "evidence.json"
                 checksum = root / "evidence.sha256"
+                signature = root / "evidence.sig"
+                private_key, public_key, key_id = signing_key(root)
                 target = f"127.0.0.1:{server.server_port}"
                 Handler.prometheus_target = target
                 rollback = root / "rollback.json"
@@ -288,6 +312,10 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                     str(output),
                     "--checksum-output",
                     str(checksum),
+                    "--signing-key-file",
+                    str(private_key),
+                    "--signature-output",
+                    str(signature),
                     "--scrape-delay-seconds",
                     "300",
                 ]
@@ -312,6 +340,11 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                             collector,
                             "monotonic_seconds",
                             side_effect=(0.0, 300.0),
+                        ),
+                        patch.object(
+                            wrapper,
+                            "EXPECTED_SIGNING_KEY_ID",
+                            key_id,
                         ),
                     ):
                         self.assertEqual(wrapper.main(), 0)
@@ -350,6 +383,30 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                 self.assertNotIn(Handler.metrics_token, evidence_text)
                 self.assertNotIn(Handler.health_token, evidence_text)
                 self.assertTrue(checksum.read_text().startswith("sha256:"))
+                signature_raw = base64.b64decode(
+                    signature.read_text().strip(), validate=True
+                )
+                signature_raw_path = root / "evidence.sig.raw"
+                signature_raw_path.write_bytes(signature_raw)
+                verified = subprocess.run(
+                    [
+                        wrapper.OPENSSL,
+                        "pkeyutl",
+                        "-verify",
+                        "-pubin",
+                        "-inkey",
+                        public_key,
+                        "-rawin",
+                        "-in",
+                        output,
+                        "-sigfile",
+                        signature_raw_path,
+                    ],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.assertEqual(verified.returncode, 0)
         finally:
             server.shutdown()
             server.server_close()
@@ -370,6 +427,10 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                 str(root / "evidence.json"),
                 "--checksum-output",
                 str(root / "evidence.sha256"),
+                "--signing-key-file",
+                str(root / "signing-private.pem"),
+                "--signature-output",
+                str(root / "evidence.sig"),
             ]
             try:
                 with (

@@ -9,6 +9,8 @@ on:
       - "codestra/scripts/validate_staging_intake_observability_contract.py"
       - "integration/staging-activation-contract-v1.json"
       - "integration/staging-runtime-evidence-v1.json"
+      - "integration/staging-runtime-evidence-v1.sig"
+      - "integration/staging-evidence-signing-public.pem"
       - ".github/workflows/controlled-intake-staging-activation-gate.yml"
   workflow_dispatch:
     inputs:
@@ -152,8 +154,13 @@ jobs:
           evidence = data["staging_evidence"]
           assert evidence["collector_repository"] == "appolon1908-hue/Codestra-Prometheus"
           assert evidence["checksum"] is None
+          assert evidence["signature_path"] is None
+          assert evidence["signature_algorithm"] == "ed25519"
+          assert evidence["signing_public_key_path"] == "integration/staging-evidence-signing-public.pem"
+          assert re.fullmatch(r"sha256:[0-9a-f]{64}", evidence["signing_key_id"])
+          assert evidence["signing_authority"] == "codestra-observability-host-37.27.128.39-root-protected-collector"
           assert evidence["state"] == "PENDING_RUNTIME_EXECUTION"
-          assert {"signed_release_manifest", "sigstore_identity"}.issubset(evidence["must_verify"])
+          assert {"signed_release_manifest", "sigstore_identity", "host_evidence_signature"}.issubset(evidence["must_verify"])
 
           policy = data["activation_policy"]
           assert policy["prometheus_target_current_state"] == "pending"

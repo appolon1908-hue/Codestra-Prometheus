@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -17,6 +20,12 @@ PRODUCTION_TOKEN_URL = "https://auth.codestra.co/realms/codestra/protocol/openid
 TARGETS_PATH = CODESTRA / "prometheus/targets/staging.json"
 CONTRACT_PATH = REPO / "integration/staging-activation-contract-v1.json"
 EVIDENCE_PATH = REPO / "integration/staging-runtime-evidence-v1.json"
+EVIDENCE_SIGNATURE_PATH = REPO / "integration/staging-runtime-evidence-v1.sig"
+EVIDENCE_PUBLIC_KEY_PATH = REPO / "integration/staging-evidence-signing-public.pem"
+EXPECTED_EVIDENCE_SIGNING_KEY_ID = (
+    "sha256:926880e6fec1981b93492dbe9004f3381367500f4df4ca3ffaa1c944572dcc20"
+)
+OPENSSL = "/usr/bin/openssl"
 PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus-staging.yml"
 PRIMARY_PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus.yml"
 EXPECTED_METRIC_LABELDROP_REGEX = (
@@ -118,7 +127,81 @@ EXPECTED_MUST_VERIFY = {
     "all_external_effects_disabled",
     "staging_soak",
     "rollback_proof",
+    "host_evidence_signature",
 }
+
+
+def validate_evidence_signing_authority(evidence_control: dict[str, object]) -> None:
+    assert evidence_control["signature_algorithm"] == "ed25519"
+    assert evidence_control["signing_public_key_path"] == (
+        "integration/staging-evidence-signing-public.pem"
+    )
+    assert evidence_control["signing_key_id"] == EXPECTED_EVIDENCE_SIGNING_KEY_ID
+    assert evidence_control["signing_authority"] == (
+        "codestra-observability-host-37.27.128.39-root-protected-collector"
+    )
+    assert EVIDENCE_PUBLIC_KEY_PATH.is_file()
+    assert not EVIDENCE_PUBLIC_KEY_PATH.is_symlink()
+    assert EVIDENCE_PUBLIC_KEY_PATH.parent.resolve() == CONTRACT_PATH.parent.resolve()
+    assert EVIDENCE_PUBLIC_KEY_PATH.resolve().is_relative_to(
+        CONTRACT_PATH.parent.resolve()
+    )
+    public_der = subprocess.run(
+        [
+            OPENSSL,
+            "pkey",
+            "-pubin",
+            "-in",
+            str(EVIDENCE_PUBLIC_KEY_PATH),
+            "-outform",
+            "DER",
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert public_der.returncode == 0 and public_der.stdout
+    actual_key_id = "sha256:" + hashlib.sha256(public_der.stdout).hexdigest()
+    assert actual_key_id == EXPECTED_EVIDENCE_SIGNING_KEY_ID
+
+
+def validate_runtime_evidence_signature(evidence_control: dict[str, object]) -> None:
+    validate_evidence_signing_authority(evidence_control)
+    assert evidence_control["signature_path"] == (
+        "integration/staging-runtime-evidence-v1.sig"
+    )
+    assert EVIDENCE_SIGNATURE_PATH.is_file()
+    assert not EVIDENCE_SIGNATURE_PATH.is_symlink()
+    assert EVIDENCE_SIGNATURE_PATH.parent.resolve() == CONTRACT_PATH.parent.resolve()
+    assert EVIDENCE_SIGNATURE_PATH.resolve().is_relative_to(
+        CONTRACT_PATH.parent.resolve()
+    )
+    signature_text = EVIDENCE_SIGNATURE_PATH.read_text(encoding="ascii")
+    assert signature_text.endswith("\n") and signature_text.strip() + "\n" == signature_text
+    signature = base64.b64decode(signature_text.strip(), validate=True)
+    assert len(signature) == 64
+    with tempfile.NamedTemporaryFile() as signature_file:
+        signature_file.write(signature)
+        signature_file.flush()
+        verification = subprocess.run(
+            [
+                OPENSSL,
+                "pkeyutl",
+                "-verify",
+                "-pubin",
+                "-inkey",
+                str(EVIDENCE_PUBLIC_KEY_PATH),
+                "-rawin",
+                "-in",
+                str(EVIDENCE_PATH),
+                "-sigfile",
+                signature_file.name,
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    assert verification.returncode == 0
 
 
 def validate_runtime_evidence(contract: dict[str, object]) -> None:
@@ -138,6 +221,7 @@ def validate_runtime_evidence(contract: dict[str, object]) -> None:
     assert hashlib.sha256(encoded).hexdigest() == expected_checksum.removeprefix(
         "sha256:"
     )
+    validate_runtime_evidence_signature(evidence_control)
     evidence = json.loads(encoded)
     assert set(evidence) == {
         "schema_version",
@@ -459,6 +543,7 @@ def validate(expected_activation: str = "pending") -> None:
         "appolon1908-hue/Codestra-Prometheus"
     )
     assert contract["staging_evidence"]["collector_branch"] == "main"
+    validate_evidence_signing_authority(contract["staging_evidence"])
     must_verify = contract["staging_evidence"]["must_verify"]
     assert isinstance(must_verify, list)
     assert len(must_verify) == len(EXPECTED_MUST_VERIFY)
@@ -466,6 +551,14 @@ def validate(expected_activation: str = "pending") -> None:
     if expected_activation == "pending":
         assert contract["staging_evidence"]["checksum"] is None
         assert contract["staging_evidence"]["artifact_path"] is None
+        assert contract["staging_evidence"]["signature_path"] is None
+        assert contract["staging_evidence"]["signature_algorithm"] == "ed25519"
+        assert contract["staging_evidence"]["signing_public_key_path"] == (
+            "integration/staging-evidence-signing-public.pem"
+        )
+        assert contract["staging_evidence"]["signing_key_id"] == (
+            EXPECTED_EVIDENCE_SIGNING_KEY_ID
+        )
         assert contract["staging_evidence"]["state"] == "PENDING_RUNTIME_EXECUTION"
         assert (
             contract["activation_policy"]["prometheus_target_current_state"]
@@ -529,6 +622,8 @@ def validate(expected_activation: str = "pending") -> None:
         "metrics.read token /v1/runtime/safety",
         '"token_scope_isolation": "PASS"',
         'evidence["schema_version"] = "1.1"',
+        "sign_evidence",
+        "EXPECTED_SIGNING_KEY_ID",
     ):
         assert required in wrapper, required
 
@@ -536,6 +631,8 @@ def validate(expected_activation: str = "pending") -> None:
     assert "collect_staging_intake_evidence_v2.py" in workflow
     assert "test_collect_staging_intake_evidence*.py" in workflow
     assert workflow.count("integration/staging-runtime-evidence-v1.json") == 2
+    assert workflow.count("integration/staging-runtime-evidence-v1.sig") == 2
+    assert workflow.count("integration/staging-evidence-signing-public.pem") == 2
     legacy_workflow = (
         REPO / ".github/workflows/controlled-intake-staging-activation-gate.yml"
     ).read_text()
