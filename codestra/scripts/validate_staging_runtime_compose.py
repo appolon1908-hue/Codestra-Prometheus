@@ -93,6 +93,7 @@ def main() -> None:
         'CANONICAL_DEVELOPMENT_REF = "refs/remotes/codestra-canonical/development"',
         'f"+refs/heads/development:{CANONICAL_DEVELOPMENT_REF}"',
         '"merge-base",',
+        'if not secret.strip() or b"\\x00" in secret:',
         '"--force-recreate"',
         '"--wait-timeout"',
         '"prometheus"',
