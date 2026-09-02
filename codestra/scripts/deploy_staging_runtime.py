@@ -18,7 +18,16 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 CANONICAL_REPOSITORY = "https://github.com/appolon1908-hue/Codestra-Prometheus.git"
 CANONICAL_MAIN_REF = "refs/remotes/codestra-canonical/main"
 GIT = "/usr/bin/git"
-DOCKER = "/usr/bin/docker"
+COMPOSE_BIN = "/usr/libexec/docker/cli-plugins/docker-compose"
+GIT_ENVIRONMENT = {
+    "PATH": "/usr/bin:/bin",
+    "HOME": "/nonexistent",
+    "XDG_CONFIG_HOME": "/nonexistent",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_TERMINAL_PROMPT": "0",
+    "LC_ALL": "C",
+}
 
 
 class PreflightError(RuntimeError):
@@ -134,6 +143,7 @@ def git_output(*args: str) -> str:
         capture_output=True,
         text=True,
         timeout=15,
+        env=GIT_ENVIRONMENT,
     )
     if result.returncode != 0:
         raise PreflightError("Git source identity could not be verified")
@@ -162,6 +172,7 @@ def validate_source(source_sha: str, *, require_merged: bool) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=30,
+            env=GIT_ENVIRONMENT,
         )
         if refreshed.returncode != 0:
             raise PreflightError("canonical main branch could not be refreshed")
@@ -178,6 +189,7 @@ def validate_source(source_sha: str, *, require_merged: bool) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=15,
+            env=GIT_ENVIRONMENT,
         )
         if merged.returncode != 0:
             raise PreflightError("source SHA is not merged into canonical main")
@@ -222,14 +234,15 @@ def main() -> int:
         if args.mode == "deploy"
         else args.secret_file
     )
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "PROMETHEUS_SOURCE_SHA": args.source_sha,
-            "MIDDLEWARE_METRICS_CLIENT_SECRET_FILE": str(secret_file),
-        }
-    )
-    command = [DOCKER, "compose", "-f", str(COMPOSE)]
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/nonexistent",
+        "DOCKER_CONFIG": "/nonexistent",
+        "LC_ALL": "C",
+        "PROMETHEUS_SOURCE_SHA": args.source_sha,
+        "MIDDLEWARE_METRICS_CLIENT_SECRET_FILE": str(secret_file),
+    }
+    command = [COMPOSE_BIN, "-f", str(COMPOSE)]
     if args.mode == "render":
         command.extend(("config", "--quiet"))
     else:

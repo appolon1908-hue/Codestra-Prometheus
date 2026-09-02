@@ -145,9 +145,12 @@ def main() -> None:
         "validate_protected_checkout()",
         "validate_isolated_interpreter()",
         'GIT = "/usr/bin/git"',
-        'DOCKER = "/usr/bin/docker"',
+        'COMPOSE_BIN = "/usr/libexec/docker/cli-plugins/docker-compose"',
         "[GIT, *args]",
-        '[DOCKER, "compose"',
+        '[COMPOSE_BIN, "-f"',
+        '"GIT_CONFIG_NOSYSTEM": "1"',
+        '"GIT_CONFIG_GLOBAL": "/dev/null"',
+        '"DOCKER_CONFIG": "/nonexistent"',
         "secret != normalized",
         "not 16 <= len(normalized) <= 4096",
         'b"\\x00" in normalized',
@@ -156,6 +159,7 @@ def main() -> None:
         '"prometheus-staging"',
     ):
         assert required in deployer
+    assert "os.environ.copy()" not in deployer
     with tempfile.TemporaryDirectory() as temporary:
         protected = Path(temporary) / "authority"
         (protected / ".git").mkdir(parents=True)
