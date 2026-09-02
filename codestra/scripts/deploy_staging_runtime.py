@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import stat
@@ -19,6 +20,12 @@ CANONICAL_REPOSITORY = "https://github.com/appolon1908-hue/Codestra-Prometheus.g
 CANONICAL_MAIN_REF = "refs/remotes/codestra-canonical/main"
 GIT = "/usr/bin/git"
 COMPOSE_BIN = "/usr/libexec/docker/cli-plugins/docker-compose"
+DOCKER = "/usr/bin/docker"
+CONTAINER_NAME = "codestra-prometheus-staging"
+EXPECTED_NETWORKS = {
+    "codestra-observability",
+    "codestra-intake-observability-staging_private",
+}
 GIT_ENVIRONMENT = {
     "PATH": "/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -284,6 +291,148 @@ def compose_environment(source_sha: str, secret_file: Path) -> dict[str, str]:
     }
 
 
+def _docker_inspect(environment: dict[str, str]) -> dict[str, object]:
+    result = subprocess.run(
+        [DOCKER, "inspect", "--type", "container", CONTAINER_NAME],
+        cwd="/",
+        env=environment,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        raise PreflightError("deployed Prometheus container could not be inspected")
+    try:
+        documents = json.loads(result.stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PreflightError("deployed Prometheus inspection was malformed") from exc
+    if not isinstance(documents, list) or len(documents) != 1:
+        raise PreflightError("deployed Prometheus inspection was not singular")
+    document = documents[0]
+    if not isinstance(document, dict):
+        raise PreflightError("deployed Prometheus inspection was malformed")
+    return document
+
+
+def _kernel_security_values(status: str) -> tuple[int, int, int]:
+    parsed: dict[str, int] = {}
+    for line in status.splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key in {"NoNewPrivs", "Seccomp", "Seccomp_filters"}:
+            if key in parsed:
+                raise PreflightError("container kernel security status was malformed")
+            try:
+                parsed[key] = int(value.strip())
+            except ValueError as exc:
+                raise PreflightError("container kernel security status was malformed") from exc
+    if set(parsed) != {"NoNewPrivs", "Seccomp", "Seccomp_filters"}:
+        raise PreflightError("container kernel security status was incomplete")
+    return parsed["NoNewPrivs"], parsed["Seccomp"], parsed["Seccomp_filters"]
+
+
+def _read_process_status(pid: int) -> str:
+    if pid <= 0:
+        raise PreflightError("deployed Prometheus process ID was invalid")
+    status_path = Path(f"/proc/{pid}/status")
+    descriptor = os.open(status_path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        encoded = stream.read(65537)
+    if not encoded or len(encoded) > 65536:
+        raise PreflightError("container kernel security status was malformed")
+    try:
+        return encoded.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise PreflightError("container kernel security status was malformed") from exc
+
+
+def validate_running_container_security(
+    source_sha: str,
+    environment: dict[str, str],
+) -> None:
+    before = _docker_inspect(environment)
+    container_id = before.get("Id")
+    state = before.get("State")
+    host_config = before.get("HostConfig")
+    network_settings = before.get("NetworkSettings")
+    config = before.get("Config")
+    if (
+        not isinstance(container_id, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", container_id)
+        or not isinstance(state, dict)
+        or state.get("Running") is not True
+        or type(state.get("Pid")) is not int
+        or not isinstance(host_config, dict)
+        or not isinstance(network_settings, dict)
+        or not isinstance(config, dict)
+    ):
+        raise PreflightError("deployed Prometheus identity or state was invalid")
+    labels = config.get("Labels")
+    if not isinstance(labels, dict) or labels.get("com.codestra.source.sha") != source_sha:
+        raise PreflightError("deployed Prometheus source label did not match")
+    security_options = host_config.get("SecurityOpt")
+    if (
+        not isinstance(security_options, list)
+        or "no-new-privileges:true" not in security_options
+        or any("seccomp=unconfined" in str(item).lower() for item in security_options)
+    ):
+        raise PreflightError("deployed Prometheus security options were unsafe")
+    networks = network_settings.get("Networks")
+    if not isinstance(networks, dict) or set(networks) != EXPECTED_NETWORKS:
+        raise PreflightError("deployed Prometheus network attachment was not exact")
+
+    pid = state["Pid"]
+    no_new_privileges, seccomp_mode, seccomp_filters = _kernel_security_values(
+        _read_process_status(pid)
+    )
+    if no_new_privileges != 1 or seccomp_mode != 2 or seccomp_filters < 1:
+        raise PreflightError(
+            "deployed Prometheus process does not have no-new-privileges and "
+            "filter-mode seccomp enforced"
+        )
+
+    after = _docker_inspect(environment)
+    after_state = after.get("State")
+    after_network_settings = after.get("NetworkSettings")
+    after_networks = (
+        after_network_settings.get("Networks")
+        if isinstance(after_network_settings, dict)
+        else None
+    )
+    if (
+        after.get("Id") != container_id
+        or not isinstance(after_state, dict)
+        or after_state.get("Running") is not True
+        or after_state.get("Pid") != pid
+        or not isinstance(after_networks, dict)
+        or set(after_networks) != EXPECTED_NETWORKS
+    ):
+        raise PreflightError("deployed Prometheus changed during security verification")
+
+
+def remove_failed_prometheus(environment: dict[str, str]) -> bool:
+    result = subprocess.run(
+        [
+            COMPOSE_BIN,
+            "--env-file",
+            "/dev/null",
+            "-f",
+            str(COMPOSE),
+            "rm",
+            "--stop",
+            "--force",
+            "prometheus-staging",
+        ],
+        cwd=REPO,
+        env=environment,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=60,
+    )
+    return result.returncode == 0
+
+
 def render(source_sha: str, secret_file: Path) -> None:
     result = subprocess.run(
         [
@@ -347,7 +496,23 @@ def run_deploy_from_trusted_launcher(source_sha: str, argv: list[str]) -> int:
         timeout=180,
     )
     if result.returncode != 0:
+        if not remove_failed_prometheus(environment):
+            raise PreflightError(
+                "staging Prometheus deploy failed and isolated service cleanup failed"
+            )
         raise PreflightError("staging Prometheus deploy failed")
+    try:
+        validate_running_container_security(source_sha, environment)
+    except (OSError, subprocess.TimeoutExpired, PreflightError) as exc:
+        if not remove_failed_prometheus(environment):
+            raise PreflightError(
+                "Prometheus runtime security verification failed and isolated "
+                "service cleanup also failed"
+            ) from exc
+        raise
+    print("PROMETHEUS_SECCOMP=PASS")
+    print("SECCOMP_DISABLED=NO")
+    print("PROMETHEUS_STAGING_NETWORK=PASS")
     return 0
 
 
@@ -361,7 +526,8 @@ def main() -> int:
     render(args.source_sha, args.secret_file)
     print("PROMETHEUS_STAGING_RENDER=PASS")
     print(f"PROMETHEUS_SOURCE_SHA={args.source_sha}")
-    print("SECCOMP_DISABLED=NO")
+    print("SECCOMP_RUNTIME_CHECK=NOT_RUN")
+    print("SECCOMP_UNCONFINED_CONFIGURED=NO")
     return 0
 
 

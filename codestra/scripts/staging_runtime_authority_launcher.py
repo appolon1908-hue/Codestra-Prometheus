@@ -404,7 +404,6 @@ def main() -> int:
         raise AuthorityError(f"staging {args.mode} operation failed")
     print(f"PROMETHEUS_STAGING_{args.mode.upper()}=PASS")
     print(f"PROMETHEUS_SOURCE_SHA={args.source_sha}")
-    print("SECCOMP_DISABLED=NO")
     return 0
 
 

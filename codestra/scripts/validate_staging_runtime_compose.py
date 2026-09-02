@@ -13,6 +13,7 @@ import yaml
 
 from deploy_staging_runtime import (
     PreflightError,
+    _kernel_security_values,
     validate_deployment_identity,
     validate_isolated_interpreter,
     validate_protected_checkout,
@@ -113,7 +114,8 @@ def main() -> None:
         }
     ]
     assert not any(
-        "seccomp" in str(value).lower() for value in service["security_opt"]
+        "seccomp=unconfined" in str(value).lower()
+        for value in service["security_opt"]
     )
     assert document["networks"] == {
         "codestra_observability": {
@@ -149,6 +151,8 @@ def main() -> None:
         '"merge-base",',
         'GIT = "/usr/bin/git"',
         'COMPOSE_BIN = "/usr/libexec/docker/cli-plugins/docker-compose"',
+        'DOCKER = "/usr/bin/docker"',
+        'CONTAINER_NAME = "codestra-prometheus-staging"',
         "[GIT, *args]",
         '"--env-file",',
         '"/dev/null",',
@@ -162,6 +166,15 @@ def main() -> None:
         '"--force-recreate"',
         '"--wait-timeout"',
         '"prometheus-staging"',
+        '"NoNewPrivs", "Seccomp", "Seccomp_filters"',
+        'seccomp_mode != 2',
+        'seccomp_filters < 1',
+        '"no-new-privileges:true" not in security_options',
+        'set(networks) != EXPECTED_NETWORKS',
+        'validate_running_container_security(source_sha, environment)',
+        'remove_failed_prometheus(environment)',
+        'print("PROMETHEUS_SECCOMP=PASS")',
+        'print("PROMETHEUS_STAGING_NETWORK=PASS")',
         'repo / "codestra" / "scripts",',
         '"deployment and collection scripts"',
         'choices=("render",)',
@@ -169,6 +182,15 @@ def main() -> None:
     ):
         assert required in deployer
     assert "os.environ.copy()" not in deployer
+    assert _kernel_security_values(
+        "Name:\tprometheus\nNoNewPrivs:\t1\nSeccomp:\t2\nSeccomp_filters:\t1\n"
+    ) == (1, 2, 1)
+    try:
+        _kernel_security_values("NoNewPrivs:\t1\nSeccomp:\t2\n")
+    except PreflightError:
+        pass
+    else:
+        raise AssertionError("incomplete kernel security status was accepted")
     secret_parameters = inspect.signature(validate_secret_file).parameters
     assert secret_parameters["required_file_uid"].default == 0
     assert secret_parameters["required_file_gid"].default == 0
@@ -296,7 +318,7 @@ def main() -> None:
         else:
             raise AssertionError("non-isolated deployment interpreter was accepted")
     print("PROMETHEUS_STAGING_RUNTIME_SOURCE=PASS")
-    print("SECCOMP_DISABLED=NO")
+    print("SECCOMP_UNCONFINED_CONFIGURED=NO")
 
 
 if __name__ == "__main__":

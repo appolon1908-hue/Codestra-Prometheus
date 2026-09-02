@@ -233,6 +233,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class ScopeIsolationCollectorTests(unittest.TestCase):
+    def test_openssl_environment_disables_external_configuration(self):
+        environment = wrapper.trusted_openssl_environment()
+        self.assertEqual(environment["OPENSSL_CONF"], "/dev/null")
+        self.assertEqual(
+            environment["OPENSSL_MODULES"],
+            "/nonexistent-codestra-openssl-modules",
+        )
+        self.assertFalse(Path(environment["OPENSSL_MODULES"]).exists())
+        with patch.object(wrapper, "OPENSSL_MODULES", "/tmp"):
+            with self.assertRaises(collector.EvidenceError):
+                wrapper.trusted_openssl_environment()
+
     def test_direct_execution_refuses_before_loading_base_collector(self):
         result = subprocess.run(
             [sys.executable, str(WRAPPER_PATH)],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import importlib.util
+from copy import deepcopy
 import subprocess
 import sys
 import tempfile
@@ -23,8 +24,32 @@ launcher = importlib.util.module_from_spec(launcher_spec)
 assert launcher_spec and launcher_spec.loader
 launcher_spec.loader.exec_module(launcher)
 
+DEPLOYER_PATH = ROOT / "codestra/scripts/deploy_staging_runtime.py"
+deployer_spec = importlib.util.spec_from_file_location(
+    "deploy_staging_runtime",
+    DEPLOYER_PATH,
+)
+deployer = importlib.util.module_from_spec(deployer_spec)
+assert deployer_spec and deployer_spec.loader
+deployer_spec.loader.exec_module(deployer)
+
 
 class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
+    @staticmethod
+    def secure_inspection(source_sha: str = "a" * 40) -> dict[str, object]:
+        return {
+            "Id": "b" * 64,
+            "State": {"Running": True, "Pid": 1234},
+            "HostConfig": {"SecurityOpt": ["no-new-privileges:true"]},
+            "NetworkSettings": {
+                "Networks": {
+                    "codestra-observability": {},
+                    "codestra-intake-observability-staging_private": {},
+                }
+            },
+            "Config": {"Labels": {"com.codestra.source.sha": source_sha}},
+        }
+
     def test_repository_copy_refuses_before_parsing_operation_arguments(self):
         marker = "/sensitive/path/must-not-be-reported"
         result = subprocess.run(
@@ -164,6 +189,91 @@ class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
             events,
             ["identity", "parse", "canonical", "verify", "dispatch"],
         )
+
+    def test_deploy_security_accepts_exact_kernel_and_network_state(self):
+        inspection = self.secure_inspection()
+        with (
+            patch.object(
+                deployer,
+                "_docker_inspect",
+                side_effect=[inspection, deepcopy(inspection)],
+            ),
+            patch.object(
+                deployer,
+                "_read_process_status",
+                return_value=(
+                    "NoNewPrivs:\t1\nSeccomp:\t2\nSeccomp_filters:\t1\n"
+                ),
+            ),
+        ):
+            deployer.validate_running_container_security("a" * 40, {})
+
+    def test_deploy_security_rejects_unconfined_or_changed_container(self):
+        unconfined = self.secure_inspection()
+        unconfined["HostConfig"]["SecurityOpt"].append("seccomp=unconfined")
+        with patch.object(deployer, "_docker_inspect", return_value=unconfined):
+            with self.assertRaises(deployer.PreflightError):
+                deployer.validate_running_container_security("a" * 40, {})
+
+        disabled = self.secure_inspection()
+        with (
+            patch.object(deployer, "_docker_inspect", return_value=disabled),
+            patch.object(
+                deployer,
+                "_read_process_status",
+                return_value=(
+                    "NoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\n"
+                ),
+            ),
+        ):
+            with self.assertRaises(deployer.PreflightError):
+                deployer.validate_running_container_security("a" * 40, {})
+
+        before = self.secure_inspection()
+        after = deepcopy(before)
+        after["State"]["Pid"] = 4321
+        with (
+            patch.object(deployer, "_docker_inspect", side_effect=[before, after]),
+            patch.object(
+                deployer,
+                "_read_process_status",
+                return_value=(
+                    "NoNewPrivs:\t1\nSeccomp:\t2\nSeccomp_filters:\t1\n"
+                ),
+            ),
+        ):
+            with self.assertRaises(deployer.PreflightError):
+                deployer.validate_running_container_security("a" * 40, {})
+
+    def test_failed_security_check_removes_only_prometheus_staging(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            secret = Path(temporary) / "client-secret"
+            with (
+                patch.object(deployer, "validate_isolated_interpreter"),
+                patch.object(deployer, "validate_deployment_identity"),
+                patch.object(deployer, "validate_secret_file", return_value=secret),
+                patch.object(
+                    deployer.subprocess,
+                    "run",
+                    return_value=argparse.Namespace(returncode=0),
+                ),
+                patch.object(
+                    deployer,
+                    "validate_running_container_security",
+                    side_effect=deployer.PreflightError("unsafe runtime"),
+                ),
+                patch.object(
+                    deployer,
+                    "remove_failed_prometheus",
+                    return_value=True,
+                ) as cleanup,
+            ):
+                with self.assertRaises(deployer.PreflightError):
+                    deployer.run_deploy_from_trusted_launcher(
+                        "a" * 40,
+                        ["--secret-file", str(secret)],
+                    )
+        cleanup.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -40,8 +40,8 @@ EXPECTED_SIGNING_KEY_ID = (
     "sha256:926880e6fec1981b93492dbe9004f3381367500f4df4ca3ffaa1c944572dcc20"
 )
 OPENSSL = "/usr/bin/openssl"
-OPENSSL_CONFIG = "/etc/ssl/openssl.cnf"
-OPENSSL_MODULES = "/usr/lib/x86_64-linux-gnu/ossl-modules"
+OPENSSL_CONFIG = "/dev/null"
+OPENSSL_MODULES = "/nonexistent-codestra-openssl-modules"
 REQUIRED_SIGNING_OWNER_UID = 0
 EVIDENCE_OUTPUT_ROOT = Path("/var/lib/codestra/staging/prometheus-evidence")
 SIGNING_KEY_ROOT = Path("/var/lib/codestra/staging/prometheus-evidence-signing")
@@ -130,20 +130,52 @@ def collector_argv(argv: list[str]) -> list[str]:
     return filtered
 
 
+def _validate_root_protected_ancestry(path: Path, label: str) -> None:
+    current = path
+    while True:
+        metadata = current.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != 0
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise collector.EvidenceError(f"{label} ancestry is not protected")
+        if current == current.parent:
+            break
+        current = current.parent
+
+
 def trusted_openssl_environment() -> dict[str, str]:
-    for item, expected_type in (
-        (Path(OPENSSL), "file"),
-        (Path(OPENSSL_CONFIG), "file"),
-        (Path(OPENSSL_MODULES), "directory"),
+    binary = Path(OPENSSL)
+    if binary.is_symlink():
+        raise collector.EvidenceError("trusted OpenSSL binary is symbolic")
+    binary_metadata = binary.stat()
+    if (
+        not stat.S_ISREG(binary_metadata.st_mode)
+        or binary_metadata.st_uid != 0
+        or stat.S_IMODE(binary_metadata.st_mode) & 0o022
+        or binary.resolve(strict=True) != binary
     ):
-        if item.is_symlink():
-            raise collector.EvidenceError(f"trusted OpenSSL {expected_type} is symbolic")
-        metadata = item.stat()
-        correct_type = item.is_file() if expected_type == "file" else item.is_dir()
-        if not correct_type or metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o022:
-            raise collector.EvidenceError(
-                f"trusted OpenSSL {expected_type} is absent or writable"
-            )
+        raise collector.EvidenceError("trusted OpenSSL binary is absent or writable")
+    _validate_root_protected_ancestry(binary.parent, "trusted OpenSSL binary")
+
+    config = Path(OPENSSL_CONFIG)
+    if config.is_symlink():
+        raise collector.EvidenceError("trusted OpenSSL null configuration is symbolic")
+    config_metadata = config.stat()
+    if (
+        not stat.S_ISCHR(config_metadata.st_mode)
+        or config_metadata.st_uid != 0
+        or config_metadata.st_rdev != os.makedev(1, 3)
+    ):
+        raise collector.EvidenceError("trusted OpenSSL null configuration is invalid")
+    _validate_root_protected_ancestry(config.parent, "trusted OpenSSL configuration")
+
+    modules = Path(OPENSSL_MODULES)
+    if modules.parent != Path("/") or modules.is_symlink() or modules.exists():
+        raise collector.EvidenceError("disabled OpenSSL module path must remain absent")
+    _validate_root_protected_ancestry(modules.parent, "disabled OpenSSL modules")
     return {
         "LANG": "C",
         "LC_ALL": "C",

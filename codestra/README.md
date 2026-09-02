@@ -23,8 +23,9 @@ Promotion is `feature/* -> development -> test -> staging -> production -> main`
 
 The dedicated staging runtime authority is
 `codestra/deploy/compose.staging.yaml`. It deploys only Prometheus, publishes no
-host port, preserves the Docker default seccomp profile, and joins exactly the
-shared observability network plus the isolated Middleware staging network. The
+host port, requires effective filter-mode seccomp at the running process, and
+joins exactly the shared observability network plus the isolated Middleware
+staging network. The
 Middleware target remains `activation=pending` until the approved read-only
 identity and runtime endpoint have both been independently proven. Activation
 requires the collector's sanitized evidence document, its exact SHA-256 in the
@@ -72,8 +73,9 @@ collector writes evidence, checksum, and a mode-`0600` detached signature only
 as direct children of `/var/lib/codestra/staging/prometheus-evidence`, whose
 complete ancestry must be protected. It refuses an existing or symbolic
 signature output. An ordinary evidence checksum is never sufficient for
-activation without this signature. OpenSSL runs with a fixed system
-configuration/module allowlist, and the signer hashes and signs the same bytes
+activation without this signature. OpenSSL runs with configuration disabled
+through the protected `/dev/null` device and an absent root-level module path,
+and the signer hashes and signs the same bytes
 through a sealed in-memory file descriptor.
 
 While the target label is `pending`, the dedicated
@@ -89,6 +91,11 @@ that repository entrypoint does not offer deployment or collection. Privileged
 operations use only the installed authority above. It recreates only the
 Prometheus service, disables Compose `.env` loading, and rejects missing,
 modified, symbolic, writable, or extra files in the deployment closure.
+After Compose reports healthy, deployment inspects the exact container twice
+around a kernel `/proc/<pid>/status` read and requires `NoNewPrivs: 1`,
+`Seccomp: 2`, at least one seccomp filter, the exact source label, and exactly
+the two approved networks. A failure removes only the isolated Prometheus
+staging service and cannot report a seccomp or network PASS.
 
 A root operator must prepare the protected source before running any repository
 code:

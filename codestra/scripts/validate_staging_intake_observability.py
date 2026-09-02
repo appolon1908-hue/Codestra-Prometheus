@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import stat
 import subprocess
@@ -27,8 +28,8 @@ EXPECTED_EVIDENCE_SIGNING_KEY_ID = (
     "sha256:926880e6fec1981b93492dbe9004f3381367500f4df4ca3ffaa1c944572dcc20"
 )
 OPENSSL = "/usr/bin/openssl"
-OPENSSL_CONFIG = "/etc/ssl/openssl.cnf"
-OPENSSL_MODULES = "/usr/lib/x86_64-linux-gnu/ossl-modules"
+OPENSSL_CONFIG = "/dev/null"
+OPENSSL_MODULES = "/nonexistent-codestra-openssl-modules"
 PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus-staging.yml"
 PRIMARY_PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus.yml"
 EXPECTED_METRIC_LABELDROP_REGEX = (
@@ -134,17 +135,42 @@ EXPECTED_MUST_VERIFY = {
 }
 
 
-def trusted_openssl_environment() -> dict[str, str]:
-    for item, expected_type in (
-        (Path(OPENSSL), "file"),
-        (Path(OPENSSL_CONFIG), "file"),
-        (Path(OPENSSL_MODULES), "directory"),
-    ):
-        assert not item.is_symlink()
-        metadata = item.stat()
-        correct_type = item.is_file() if expected_type == "file" else item.is_dir()
-        assert correct_type and metadata.st_uid == 0
+def _validate_root_protected_ancestry(path: Path) -> None:
+    current = path
+    while True:
+        metadata = current.lstat()
+        assert not stat.S_ISLNK(metadata.st_mode)
+        assert stat.S_ISDIR(metadata.st_mode)
+        assert metadata.st_uid == 0
         assert stat.S_IMODE(metadata.st_mode) & 0o022 == 0
+        if current == current.parent:
+            break
+        current = current.parent
+
+
+def trusted_openssl_environment() -> dict[str, str]:
+    binary = Path(OPENSSL)
+    assert not binary.is_symlink()
+    binary_metadata = binary.stat()
+    assert stat.S_ISREG(binary_metadata.st_mode)
+    assert binary_metadata.st_uid == 0
+    assert stat.S_IMODE(binary_metadata.st_mode) & 0o022 == 0
+    assert binary.resolve(strict=True) == binary
+    _validate_root_protected_ancestry(binary.parent)
+
+    config = Path(OPENSSL_CONFIG)
+    assert not config.is_symlink()
+    config_metadata = config.stat()
+    assert stat.S_ISCHR(config_metadata.st_mode)
+    assert config_metadata.st_uid == 0
+    assert config_metadata.st_rdev == os.makedev(1, 3)
+    _validate_root_protected_ancestry(config.parent)
+
+    modules = Path(OPENSSL_MODULES)
+    assert modules.parent == Path("/")
+    assert not modules.is_symlink()
+    assert not modules.exists()
+    _validate_root_protected_ancestry(modules.parent)
     return {
         "LANG": "C",
         "LC_ALL": "C",
