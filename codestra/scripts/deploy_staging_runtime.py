@@ -61,8 +61,10 @@ def validate_secret_file(path: Path) -> Path:
     info = resolved.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_size < 16 or info.st_size > 4096:
         raise PreflightError("metrics client secret file is missing or malformed")
-    if stat.S_IMODE(info.st_mode) & 0o007:
-        raise PreflightError("metrics client secret file is accessible to other users")
+    if info.st_uid != 65534:
+        raise PreflightError("metrics client secret must be owned by Prometheus uid 65534")
+    if stat.S_IMODE(info.st_mode) not in {0o400, 0o600}:
+        raise PreflightError("metrics client secret mode must be 0400 or 0600")
     return resolved
 
 
