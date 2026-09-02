@@ -42,6 +42,16 @@ def validate_source(source_sha: str, *, require_merged: bool) -> None:
     if git_output("status", "--porcelain"):
         raise PreflightError("deployment checkout is not clean")
     if require_merged:
+        refreshed = subprocess.run(
+            ["git", "fetch", "--quiet", "--no-tags", "origin", "development"],
+            cwd=REPO,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        if refreshed.returncode != 0:
+            raise PreflightError("origin/development could not be refreshed")
         merged = subprocess.run(
             ["git", "merge-base", "--is-ancestor", source_sha, "origin/development"],
             cwd=REPO,
