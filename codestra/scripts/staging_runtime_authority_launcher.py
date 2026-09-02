@@ -194,11 +194,7 @@ def initialize_canonical_authority(root: Path, source_sha: str) -> Path:
 
 
 def canonical_paths(git_directory: Path, source_sha: str, mode: str) -> tuple[str, ...]:
-    if mode == "collect":
-        return tuple(
-            sorted({LAUNCHER_SOURCE, DEPLOYER_SOURCE, *COLLECTOR_SOURCES})
-        )
-    if mode != "deploy":
+    if mode not in {"deploy", "collect"}:
         raise AuthorityError("unsupported privileged staging mode")
     encoded = trusted_git(
         git_directory,
@@ -217,6 +213,8 @@ def canonical_paths(git_directory: Path, source_sha: str, mode: str) -> tuple[st
     except UnicodeDecodeError as exc:
         raise AuthorityError("canonical source contains a non-UTF-8 path") from exc
     paths = discovered | {LAUNCHER_SOURCE, DEPLOYER_SOURCE}
+    if mode == "collect":
+        paths.update(COLLECTOR_SOURCES)
     for relative in paths:
         candidate = Path(relative)
         if candidate.is_absolute() or ".." in candidate.parts:
@@ -293,7 +291,7 @@ def verify_execution_closure(
     }
     if read_protected_source(launcher, "installed launcher") != expected[LAUNCHER_SOURCE]:
         raise AuthorityError("installed launcher does not match canonical source")
-    if mode == "deploy":
+    if mode in {"deploy", "collect"}:
         expected_runtime_files = {
             relative
             for relative in paths

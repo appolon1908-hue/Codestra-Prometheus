@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -30,6 +31,30 @@ EXPECTED_NETWORKS = {
 EXPECTED_IMAGE = (
     "prom/prometheus:v3.5.0@sha256:"
     "63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996"
+)
+EXPECTED_COMMAND = [
+    "--config.file=/etc/prometheus/prometheus.yml",
+    "--storage.tsdb.path=/prometheus",
+    "--storage.tsdb.retention.time=30d",
+    "--storage.tsdb.retention.size=40GB",
+    "--web.listen-address=0.0.0.0:9090",
+    "--web.enable-admin-api=false",
+    "--web.enable-lifecycle=false",
+    "--query.max-concurrency=20",
+    "--query.timeout=2m",
+]
+EXPECTED_READONLY_BIND_MOUNTS = {
+    "/etc/prometheus/prometheus.yml": REPO
+    / "codestra/prometheus/prometheus-staging.yml",
+    "/etc/prometheus/targets": REPO / "codestra/prometheus/targets",
+    "/etc/prometheus/rules-staging/intake-recording-rules.yml": REPO
+    / "codestra/prometheus/rules/intake-recording-rules.yml",
+    "/etc/prometheus/rules-staging/intake-alerts.yml": REPO
+    / "codestra/prometheus/rules/intake-alerts.yml",
+}
+RUNTIME_CONFIGURATION_PATHS = (
+    COMPOSE,
+    *EXPECTED_READONLY_BIND_MOUNTS.values(),
 )
 GIT_ENVIRONMENT = {
     "PATH": "/usr/bin:/bin",
@@ -357,6 +382,86 @@ def _read_process_status(pid: int) -> str:
         raise PreflightError("container kernel security status was malformed") from exc
 
 
+def _runtime_configuration_sha256() -> str:
+    files: list[Path] = []
+    for configured in RUNTIME_CONFIGURATION_PATHS:
+        if configured.is_dir():
+            files.extend(sorted(item for item in configured.rglob("*") if item.is_file()))
+        else:
+            files.append(configured)
+    digest = hashlib.sha256()
+    for path in sorted(set(files)):
+        if path.is_symlink() or not path.is_file():
+            raise PreflightError("Prometheus runtime configuration source is invalid")
+        try:
+            relative = path.relative_to(REPO).as_posix()
+        except ValueError as exc:
+            raise PreflightError(
+                "Prometheus runtime configuration escaped the protected checkout"
+            ) from exc
+        encoded = path.read_bytes()
+        if len(encoded) > 8 * 1024 * 1024:
+            raise PreflightError("Prometheus runtime configuration source is oversized")
+        if relative == "codestra/prometheus/targets/staging.json":
+            try:
+                normalized = json.loads(encoded)
+                normalized[0]["labels"]["activation"] = "normalized-for-runtime-hash"
+                encoded = json.dumps(
+                    normalized,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+                raise PreflightError(
+                    "Prometheus staging target configuration was malformed"
+                ) from exc
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(encoded).digest())
+    return "sha256:" + digest.hexdigest()
+
+
+def _validate_runtime_mounts(document: dict[str, object]) -> str:
+    mounts = document.get("Mounts")
+    if not isinstance(mounts, list) or not all(isinstance(item, dict) for item in mounts):
+        raise PreflightError("deployed Prometheus mounts were malformed")
+    by_destination = {item.get("Destination"): item for item in mounts}
+    expected_destinations = {
+        *EXPECTED_READONLY_BIND_MOUNTS,
+        "/prometheus",
+        "/run/secrets/middleware-staging-monitoring-client-secret",
+    }
+    if len(by_destination) != len(mounts) or set(by_destination) != expected_destinations:
+        raise PreflightError("deployed Prometheus mount destinations were not exact")
+    for destination, source in EXPECTED_READONLY_BIND_MOUNTS.items():
+        mount = by_destination[destination]
+        if (
+            mount.get("Type") != "bind"
+            or mount.get("RW") is not False
+            or mount.get("Source") != str(source.resolve(strict=True))
+        ):
+            raise PreflightError("deployed Prometheus configuration mount was not exact")
+    data = by_destination["/prometheus"]
+    if (
+        data.get("Type") != "volume"
+        or data.get("Name") != "codestra-prometheus-staging_prometheus_staging_data"
+        or data.get("RW") is not True
+    ):
+        raise PreflightError("deployed Prometheus data mount was not exact")
+    secret = by_destination[
+        "/run/secrets/middleware-staging-monitoring-client-secret"
+    ]
+    secret_source = secret.get("Source")
+    if (
+        secret.get("Type") != "bind"
+        or secret.get("RW") is not False
+        or not isinstance(secret_source, str)
+        or not Path(secret_source).is_absolute()
+    ):
+        raise PreflightError("deployed Prometheus secret mount was not protected")
+    return _runtime_configuration_sha256()
+
+
 def validate_running_container_security(
     source_sha: str,
     environment: dict[str, str],
@@ -381,10 +486,37 @@ def validate_running_container_security(
     ):
         raise PreflightError("deployed Prometheus identity or state was invalid")
     labels = config.get("Labels")
-    if not isinstance(labels, dict) or labels.get("com.codestra.source.sha") != source_sha:
+    if (
+        not isinstance(labels, dict)
+        or labels.get("com.codestra.source.sha") != source_sha
+        or labels.get("com.codestra.source.repository")
+        != "appolon1908-hue/Codestra-Prometheus"
+        or labels.get("com.codestra.environment") != "staging"
+        or labels.get("com.codestra.service") != "prometheus"
+        or labels.get("com.docker.compose.project")
+        != "codestra-prometheus-staging"
+        or labels.get("com.docker.compose.service") != "prometheus-staging"
+        or labels.get("com.docker.compose.oneoff") != "False"
+    ):
         raise PreflightError("deployed Prometheus source label did not match")
     if config.get("Image") != EXPECTED_IMAGE:
         raise PreflightError("deployed Prometheus image did not match")
+    if (
+        config.get("User") != "65534:0"
+        or config.get("Cmd") != EXPECTED_COMMAND
+        or config.get("ExposedPorts") != {"9090/tcp": {}}
+        or not isinstance(config.get("Healthcheck"), dict)
+        or config["Healthcheck"].get("Test")
+        != ["CMD", "/bin/promtool", "check", "healthy"]
+        or host_config.get("ReadonlyRootfs") is not True
+        or host_config.get("CapDrop") != ["ALL"]
+        or host_config.get("Privileged") is not False
+        or host_config.get("PidsLimit") != 256
+        or host_config.get("Init") is not True
+        or host_config.get("PublishAllPorts") is not False
+        or (host_config.get("PortBindings") or {}) != {}
+    ):
+        raise PreflightError("deployed Prometheus runtime configuration was not exact")
     security_options = host_config.get("SecurityOpt")
     if (
         not isinstance(security_options, list)
@@ -395,6 +527,29 @@ def validate_running_container_security(
     networks = network_settings.get("Networks")
     if not isinstance(networks, dict) or set(networks) != EXPECTED_NETWORKS:
         raise PreflightError("deployed Prometheus network attachment was not exact")
+    published_ports = network_settings.get("Ports")
+    if (
+        not isinstance(published_ports, dict)
+        or any(value is not None for value in published_ports.values())
+    ):
+        raise PreflightError("deployed Prometheus publishes a host port")
+    network_addresses: dict[str, str] = {}
+    for name in sorted(EXPECTED_NETWORKS):
+        detail = networks[name]
+        address = detail.get("IPAddress") if isinstance(detail, dict) else None
+        try:
+            parsed_address = ipaddress.ip_address(address)
+        except ValueError as exc:
+            raise PreflightError("deployed Prometheus network address was invalid") from exc
+        if (
+            parsed_address.version != 4
+            or not parsed_address.is_private
+            or parsed_address.is_loopback
+            or parsed_address.is_link_local
+        ):
+            raise PreflightError("deployed Prometheus network address was not private")
+        network_addresses[name] = str(parsed_address)
+    configuration_sha256 = _validate_runtime_mounts(before)
 
     pid = state["Pid"]
     started_at = state["StartedAt"]
@@ -425,6 +580,12 @@ def validate_running_container_security(
         or set(after_networks) != EXPECTED_NETWORKS
     ):
         raise PreflightError("deployed Prometheus changed during security verification")
+    for name, address in network_addresses.items():
+        after_detail = after_networks[name]
+        if not isinstance(after_detail, dict) or after_detail.get("IPAddress") != address:
+            raise PreflightError("deployed Prometheus address changed during verification")
+    if _validate_runtime_mounts(after) != configuration_sha256:
+        raise PreflightError("deployed Prometheus mounts changed during verification")
     return {
         "schema_version": "1.0",
         "container_identity_sha256": "sha256:"
@@ -435,10 +596,12 @@ def validate_running_container_security(
         ).hexdigest(),
         "source_sha": source_sha,
         "image_digest": EXPECTED_IMAGE.rsplit("@", 1)[1],
+        "runtime_configuration_sha256": configuration_sha256,
         "no_new_privileges": True,
         "seccomp_mode": "filter",
         "seccomp_filters": seccomp_filters,
         "networks": sorted(EXPECTED_NETWORKS),
+        "network_addresses": network_addresses,
     }
 
 

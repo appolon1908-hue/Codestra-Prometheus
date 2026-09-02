@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -35,6 +36,13 @@ OPENSSL_CONFIG = "/dev/null"
 OPENSSL_MODULES = "/nonexistent-codestra-openssl-modules"
 PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus-staging.yml"
 PRIMARY_PROMETHEUS_CONFIG_PATH = CODESTRA / "prometheus/prometheus.yml"
+RUNTIME_CONFIGURATION_PATHS = (
+    CODESTRA / "deploy/compose.staging.yaml",
+    CODESTRA / "prometheus/prometheus-staging.yml",
+    CODESTRA / "prometheus/targets",
+    CODESTRA / "prometheus/rules/intake-recording-rules.yml",
+    CODESTRA / "prometheus/rules/intake-alerts.yml",
+)
 EXPECTED_METRIC_LABELDROP_REGEX = (
     "(?i)^(tenant_id|tenant_name|organization_id|organization_name|customer_id|"
     "customer_name|account_id|user_id|user_name|email|phone|consumer|workspace|"
@@ -184,6 +192,33 @@ def trusted_openssl_environment() -> dict[str, str]:
     }
 
 
+def expected_runtime_configuration_sha256() -> str:
+    files: list[Path] = []
+    for configured in RUNTIME_CONFIGURATION_PATHS:
+        if configured.is_dir():
+            files.extend(sorted(item for item in configured.rglob("*") if item.is_file()))
+        else:
+            files.append(configured)
+    digest = hashlib.sha256()
+    for path in sorted(set(files)):
+        assert path.is_file() and not path.is_symlink()
+        relative = path.relative_to(REPO).as_posix()
+        encoded = path.read_bytes()
+        assert len(encoded) <= 8 * 1024 * 1024
+        if relative == "codestra/prometheus/targets/staging.json":
+            normalized = json.loads(encoded)
+            normalized[0]["labels"]["activation"] = "normalized-for-runtime-hash"
+            encoded = json.dumps(
+                normalized,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(encoded).digest())
+    return "sha256:" + digest.hexdigest()
+
+
 def validate_evidence_signing_authority(evidence_control: dict[str, object]) -> None:
     assert evidence_control["signature_algorithm"] == "ed25519"
     assert evidence_control["signing_public_key_path"] == (
@@ -319,10 +354,12 @@ def validate_runtime_evidence(contract: dict[str, object]) -> None:
         "process_identity_sha256",
         "source_sha",
         "image_digest",
+        "runtime_configuration_sha256",
         "no_new_privileges",
         "seccomp_mode",
         "seccomp_filters",
         "networks",
+        "network_addresses",
     }
     assert runtime_security["schema_version"] == "1.0"
     assert re.fullmatch(
@@ -334,6 +371,9 @@ def validate_runtime_evidence(contract: dict[str, object]) -> None:
     assert runtime_security["source_sha"] == evidence_control["collector_source_sha"]
     assert re.fullmatch(r"[0-9a-f]{40}", runtime_security["source_sha"])
     assert runtime_security["image_digest"] == EXPECTED_PROMETHEUS_DIGEST
+    assert runtime_security["runtime_configuration_sha256"] == (
+        expected_runtime_configuration_sha256()
+    )
     assert runtime_security["no_new_privileges"] is True
     assert runtime_security["seccomp_mode"] == "filter"
     assert type(runtime_security["seccomp_filters"]) is int
@@ -342,6 +382,17 @@ def validate_runtime_evidence(contract: dict[str, object]) -> None:
         "codestra-intake-observability-staging_private",
         "codestra-observability",
     ]
+    assert set(runtime_security["network_addresses"]) == set(
+        runtime_security["networks"]
+    )
+    for name, address in runtime_security["network_addresses"].items():
+        parsed_address = ipaddress.ip_address(address)
+        assert parsed_address.version == 4
+        assert parsed_address.is_private
+        assert not parsed_address.is_loopback
+        assert not parsed_address.is_link_local
+        if name == "codestra-observability":
+            assert parsed_address in ipaddress.ip_network("192.168.16.0/24")
     authority = contract["middleware_source_authority"]
     supply_chain = evidence["supply_chain"]
     assert supply_chain == {
@@ -692,6 +743,8 @@ def validate(expected_activation: str = "pending") -> None:
         "rollback_proof",
         "ProxyHandler({})",
         "prometheus_scrape_evidence",
+        "PROMETHEUS_BOUND_ADDRESS",
+        "prometheus_api_url",
         "validate_prometheus_url",
         '"prometheus_target_up"',
         '"prometheus_scrape_http_200"',
@@ -711,6 +764,7 @@ def validate(expected_activation: str = "pending") -> None:
         'evidence["schema_version"] = "1.2"',
         'runtime_security_verifier()',
         'evidence["prometheus_runtime_security"]',
+        'addresses.get("codestra-observability")',
         "sign_evidence",
         "EXPECTED_SIGNING_KEY_ID",
     ):

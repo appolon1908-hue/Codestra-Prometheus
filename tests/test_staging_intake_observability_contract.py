@@ -60,6 +60,9 @@ def runtime_evidence() -> dict[str, object]:
             "process_identity_sha256": "sha256:" + "6" * 64,
             "source_sha": "a" * 40,
             "image_digest": source.EXPECTED_PROMETHEUS_DIGEST,
+            "runtime_configuration_sha256": (
+                source.expected_runtime_configuration_sha256()
+            ),
             "no_new_privileges": True,
             "seccomp_mode": "filter",
             "seccomp_filters": 1,
@@ -67,6 +70,10 @@ def runtime_evidence() -> dict[str, object]:
                 "codestra-intake-observability-staging_private",
                 "codestra-observability",
             ],
+            "network_addresses": {
+                "codestra-intake-observability-staging_private": "172.30.0.5",
+                "codestra-observability": "192.168.16.2",
+            },
         },
         "supply_chain": {
             "release_manifest_verification": "PASS_IN_SIGNED_RELEASE_WORKFLOW",

@@ -39,6 +39,7 @@ def runtime_security_receipt() -> dict[str, object]:
         "process_identity_sha256": "sha256:" + "6" * 64,
         "source_sha": PROMETHEUS_SOURCE,
         "image_digest": PROMETHEUS_DIGEST,
+        "runtime_configuration_sha256": "sha256:" + "7" * 64,
         "no_new_privileges": True,
         "seccomp_mode": "filter",
         "seccomp_filters": 1,
@@ -46,6 +47,10 @@ def runtime_security_receipt() -> dict[str, object]:
             "codestra-intake-observability-staging_private",
             "codestra-observability",
         ],
+        "network_addresses": {
+            "codestra-intake-observability-staging_private": "127.0.0.1",
+            "codestra-observability": "127.0.0.1",
+        },
     }
 
 
@@ -382,7 +387,10 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                         patch.object(
                             collector,
                             "validate_prometheus_url",
-                            return_value=f"http://127.0.0.1:{server.server_port}",
+                            return_value=(
+                                "http://prometheus-staging:"
+                                f"{server.server_port}"
+                            ),
                         ),
                         patch.object(
                             collector,

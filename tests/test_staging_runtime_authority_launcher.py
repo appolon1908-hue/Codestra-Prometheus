@@ -44,17 +44,75 @@ class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
                 "Pid": 1234,
                 "StartedAt": "2026-09-02T20:00:00.000000000Z",
             },
-            "HostConfig": {"SecurityOpt": ["no-new-privileges:true"]},
+            "HostConfig": {
+                "SecurityOpt": ["no-new-privileges:true"],
+                "ReadonlyRootfs": True,
+                "CapDrop": ["ALL"],
+                "Privileged": False,
+                "PidsLimit": 256,
+                "Init": True,
+                "PublishAllPorts": False,
+                "PortBindings": {},
+            },
             "NetworkSettings": {
                 "Networks": {
-                    "codestra-observability": {},
-                    "codestra-intake-observability-staging_private": {},
-                }
+                    "codestra-observability": {"IPAddress": "192.168.16.2"},
+                    "codestra-intake-observability-staging_private": {
+                        "IPAddress": "172.30.0.5"
+                    },
+                },
+                "Ports": {"9090/tcp": None},
             },
             "Config": {
                 "Image": deployer.EXPECTED_IMAGE,
-                "Labels": {"com.codestra.source.sha": source_sha},
+                "User": "65534:0",
+                "Cmd": deployer.EXPECTED_COMMAND,
+                "ExposedPorts": {"9090/tcp": {}},
+                "Healthcheck": {
+                    "Test": ["CMD", "/bin/promtool", "check", "healthy"]
+                },
+                "Labels": {
+                    "com.codestra.source.sha": source_sha,
+                    "com.codestra.source.repository": (
+                        "appolon1908-hue/Codestra-Prometheus"
+                    ),
+                    "com.codestra.environment": "staging",
+                    "com.codestra.service": "prometheus",
+                    "com.docker.compose.project": "codestra-prometheus-staging",
+                    "com.docker.compose.service": "prometheus-staging",
+                    "com.docker.compose.oneoff": "False",
+                },
             },
+            "Mounts": [
+                *[
+                    {
+                        "Type": "bind",
+                        "Source": str(source.resolve()),
+                        "Destination": destination,
+                        "RW": False,
+                    }
+                    for destination, source in (
+                        deployer.EXPECTED_READONLY_BIND_MOUNTS.items()
+                    )
+                ],
+                {
+                    "Type": "volume",
+                    "Name": (
+                        "codestra-prometheus-staging_prometheus_staging_data"
+                    ),
+                    "Destination": "/prometheus",
+                    "RW": True,
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/protected/client-secret",
+                    "Destination": (
+                        "/run/secrets/"
+                        "middleware-staging-monitoring-client-secret"
+                    ),
+                    "RW": False,
+                },
+            ],
         }
 
     def test_repository_copy_refuses_before_parsing_operation_arguments(self):
@@ -218,6 +276,14 @@ class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
         self.assertEqual(receipt["seccomp_mode"], "filter")
         self.assertTrue(receipt["no_new_privileges"])
         self.assertEqual(receipt["networks"], sorted(deployer.EXPECTED_NETWORKS))
+        self.assertEqual(
+            receipt["network_addresses"]["codestra-observability"],
+            "192.168.16.2",
+        )
+        self.assertRegex(
+            receipt["runtime_configuration_sha256"],
+            r"^sha256:[0-9a-f]{64}$",
+        )
         self.assertRegex(receipt["container_identity_sha256"], r"^sha256:[0-9a-f]{64}$")
         self.assertRegex(receipt["process_identity_sha256"], r"^sha256:[0-9a-f]{64}$")
 
@@ -225,6 +291,12 @@ class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
         unconfined = self.secure_inspection()
         unconfined["HostConfig"]["SecurityOpt"].append("seccomp=unconfined")
         with patch.object(deployer, "_docker_inspect", return_value=unconfined):
+            with self.assertRaises(deployer.PreflightError):
+                deployer.validate_running_container_security("a" * 40, {})
+
+        modified_mount = self.secure_inspection()
+        modified_mount["Mounts"][0]["Source"] = "/unreviewed/prometheus.yml"
+        with patch.object(deployer, "_docker_inspect", return_value=modified_mount):
             with self.assertRaises(deployer.PreflightError):
                 deployer.validate_running_container_security("a" * 40, {})
 

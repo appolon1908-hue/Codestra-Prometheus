@@ -358,6 +358,18 @@ def main(
     runtime_security_before = (
         runtime_security_verifier() if runtime_security_verifier else None
     )
+    bound_prometheus_address = None
+    if runtime_security_before is not None:
+        addresses = runtime_security_before.get("network_addresses")
+        if not isinstance(addresses, dict):
+            raise collector.EvidenceError(
+                "Prometheus runtime security receipt has no network addresses"
+            )
+        bound_prometheus_address = addresses.get("codestra-observability")
+        if not isinstance(bound_prometheus_address, str):
+            raise collector.EvidenceError(
+                "Prometheus runtime security receipt has no observability address"
+            )
     metrics_token = collector.read_private_file(args.metrics_token_file)
     health_token = collector.read_private_file(args.health_token_file)
     metrics_metadata = exact_scope_metadata(metrics_token, METRICS_SCOPE)
@@ -368,13 +380,16 @@ def main(
     isolation = scope_isolation_checks(base_url, metrics_token, health_token)
 
     original_argv = sys.argv
+    original_prometheus_address = collector.PROMETHEUS_BOUND_ADDRESS
     captured = io.StringIO()
     try:
         sys.argv = [original_argv[0], *collector_argv(effective_argv)]
+        collector.PROMETHEUS_BOUND_ADDRESS = bound_prometheus_address
         with contextlib.redirect_stdout(captured):
             result = collector.main()
     finally:
         sys.argv = original_argv
+        collector.PROMETHEUS_BOUND_ADDRESS = original_prometheus_address
     if result != 0:
         raise collector.EvidenceError("base evidence collector did not pass")
 

@@ -45,8 +45,10 @@ mode-`0600` files outside Git and are never printed.
 The protected collection launcher verifies the Prometheus container before and
 after the soak. Signed evidence binds hashed container/process identities, the
 exact Prometheus source and image digest, filter-mode seccomp,
-no-new-privileges, and the exact two-network attachment; activation rejects a
-missing or malformed runtime-security receipt.
+no-new-privileges, the reviewed mounted-configuration hash, and the exact
+two-network attachment. Prometheus API reads connect to the inspected
+container's literal observability-network address instead of relying on DNS;
+activation rejects a missing or malformed runtime-security receipt.
 Because monitoring JWTs live for no more than 300 seconds, the token issuer must
 atomically renew both token files during the soak. The collector rereads both
 files after the delay and rejects unchanged credentials before the second scrape
@@ -99,8 +101,10 @@ modified, symbolic, writable, or extra files in the deployment closure.
 After Compose reports healthy, deployment inspects the exact container twice
 around a kernel `/proc/<pid>/status` read and requires `NoNewPrivs: 1`,
 `Seccomp: 2`, at least one seccomp filter, the exact source label, and exactly
-the two approved networks. A failure removes only the isolated Prometheus
-staging service and cannot report a seccomp or network PASS.
+the two approved networks. It also requires the exact read-only source mounts,
+configuration hash, immutable image, command, user, capabilities, limits,
+healthcheck, and unpublished-port state. A failure removes only the isolated
+Prometheus staging service and cannot report a seccomp or network PASS.
 
 A root operator must prepare the protected source before running any repository
 code:

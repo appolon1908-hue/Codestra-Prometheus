@@ -31,6 +31,7 @@ REPO = Path(__file__).resolve().parents[2]
 TARGETS_PATH = REPO / "codestra/prometheus/targets/staging.json"
 CONTRACT_PATH = REPO / "integration/staging-activation-contract-v1.json"
 MINIMUM_SOAK_SECONDS = 300.0
+PROMETHEUS_BOUND_ADDRESS: str | None = None
 
 EXPECTED_METRIC_FAMILIES = {
     "codestra_http_requests",
@@ -430,12 +431,24 @@ def request(url: str, token: str | None = None, *, timeout: float = 10.0) -> tup
         raise EvidenceError(f"GET request failed for {urllib.parse.urlsplit(url).path}") from exc
 
 
+def prometheus_api_url(prometheus_url: str, path_and_query: str) -> str:
+    if PROMETHEUS_BOUND_ADDRESS is None:
+        return prometheus_url + path_and_query
+    try:
+        address = ipaddress.ip_address(PROMETHEUS_BOUND_ADDRESS)
+    except ValueError as exc:
+        raise EvidenceError("bound Prometheus address is invalid") from exc
+    parsed = urllib.parse.urlsplit(prometheus_url)
+    host = f"[{address}]" if address.version == 6 else str(address)
+    return f"http://{host}:{parsed.port}{path_and_query}"
+
+
 def prometheus_scrape_evidence(
     prometheus_url: str,
     prometheus_target: str,
 ) -> dict[str, Any]:
     status, headers, body = request(
-        prometheus_url + "/api/v1/targets?state=active"
+        prometheus_api_url(prometheus_url, "/api/v1/targets?state=active")
     )
     if status != 200 or "application/json" not in headers.get("content-type", ""):
         raise EvidenceError("Prometheus active-target API did not return JSON HTTP 200")
@@ -482,7 +495,7 @@ def prometheus_scrape_evidence(
         }
     )
     query_status, query_headers, query_body = request(
-        prometheus_url + "/api/v1/query?" + query
+        prometheus_api_url(prometheus_url, "/api/v1/query?" + query)
     )
     if query_status != 200 or "application/json" not in query_headers.get(
         "content-type", ""

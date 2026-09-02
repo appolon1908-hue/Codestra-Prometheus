@@ -72,6 +72,7 @@ def validate_activation_diff(base_sha: str) -> None:
     assert before["activation_policy"]["prometheus_target_current_state"] == "pending"
     assert before["activation_policy"]["prometheus_target_allowed_next_state"] == "active"
     assert all(value is False for value in before["runtime_effects"].values())
+    assert after["staging_evidence"]["collector_source_sha"] == base_sha
 
     permitted = copy.deepcopy(before)
     for key in (
