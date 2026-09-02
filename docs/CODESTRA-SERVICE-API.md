@@ -20,6 +20,7 @@ Contract: `codestra/api/service-contract.v1.json`
 | `GET` | `/metrics` | metrics | read_only | never proxied by the Codestra control API |
 | `GET` | `/api/v1/targets` | query | read_only | never proxied by the Codestra control API |
 | `GET` | `/api/v1/rules` | query | read_only | never proxied by the Codestra control API |
+| `GET` | `/api/v1/alerts` | query | read_only | never proxied by the Codestra control API |
 | `GET` | `/api/v1/query` | query | read_only | never proxied by the Codestra control API |
 | `GET` | `/api/v1/query_range` | query | read_only | never proxied by the Codestra control API |
 

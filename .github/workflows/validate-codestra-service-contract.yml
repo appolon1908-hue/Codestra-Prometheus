@@ -44,6 +44,9 @@ jobs:
           import re
           from pathlib import Path
 
+          if not __debug__:
+              raise SystemExit('contract validation cannot run with Python assertions disabled')
+
           contract = json.loads(Path('codestra/api/service-contract.v1.json').read_text(encoding='utf-8'))
           assert contract['schemaVersion'] == '1.0.0'
           assert contract['component'] == 'prometheus'
@@ -60,6 +63,18 @@ jobs:
           assert re.fullmatch(r'CODESTRA_[A-Z0-9_]+', contract['nativeApi']['baseUrlEnvironment'])
           operations = {item['id']: item for item in contract['nativeApi']['operations']}
           assert len(operations) == len(contract['nativeApi']['operations'])
+          required_operations = {
+              ('GET', '/-/healthy'),
+              ('GET', '/-/ready'),
+              ('GET', '/metrics'),
+              ('GET', '/api/v1/query'),
+              ('GET', '/api/v1/query_range'),
+              ('GET', '/api/v1/rules'),
+              ('GET', '/api/v1/alerts'),
+          }
+          assert required_operations <= {
+              (item['method'], item['path']) for item in operations.values()
+          }
           for operation in operations.values():
               path = operation['path']
               assert isinstance(path, str) and path.startswith('/') and not path.startswith('//')

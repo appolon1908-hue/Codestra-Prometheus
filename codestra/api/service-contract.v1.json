@@ -45,6 +45,7 @@
       {"acceptedStatuses": [200], "access": "read_only", "category": "metrics", "controlPlaneProxyAllowed": false, "id": "metrics", "method": "GET", "path": "/metrics", "responseBodyPolicy": "discard", "timeoutMs": 3000},
       {"acceptedStatuses": [200], "access": "read_only", "category": "query", "controlPlaneProxyAllowed": false, "id": "targets", "method": "GET", "path": "/api/v1/targets", "responseBodyPolicy": "native", "timeoutMs": 3000},
       {"acceptedStatuses": [200], "access": "read_only", "category": "query", "controlPlaneProxyAllowed": false, "id": "rules", "method": "GET", "path": "/api/v1/rules", "responseBodyPolicy": "native", "timeoutMs": 3000},
+      {"acceptedStatuses": [200], "access": "read_only", "category": "query", "controlPlaneProxyAllowed": false, "id": "alerts", "method": "GET", "path": "/api/v1/alerts", "responseBodyPolicy": "native", "timeoutMs": 3000},
       {"acceptedStatuses": [200], "access": "read_only", "category": "query", "controlPlaneProxyAllowed": false, "id": "query", "method": "GET", "path": "/api/v1/query", "responseBodyPolicy": "native", "timeoutMs": 3000},
       {"acceptedStatuses": [200], "access": "read_only", "category": "query", "controlPlaneProxyAllowed": false, "id": "query-range", "method": "GET", "path": "/api/v1/query_range", "responseBodyPolicy": "native", "timeoutMs": 3000}
     ]
