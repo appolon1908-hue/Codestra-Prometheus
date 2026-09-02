@@ -82,7 +82,9 @@ The mandatory `-I` interpreter mode removes the checkout and caller working
 directory from Python's import path before the entrypoint starts. Deployment
 preflight also rejects writable `codestra/` or `codestra/scripts/` parent
 directories, so the entrypoint cannot be replaced or shadow standard-library
-imports before its recursive source checks run.
+imports before its recursive source checks run. Privileged Git and Docker
+subprocesses use their fixed root-owned `/usr/bin` paths and do not trust an
+inherited executable search path.
 
 Deployment mode must run as root so the UID-65534-owned client-secret file can
 be checked without broadening its ownership or mode. It waits up to 120 seconds
