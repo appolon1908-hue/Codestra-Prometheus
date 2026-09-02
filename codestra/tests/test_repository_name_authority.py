@@ -64,6 +64,39 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
                 changed,
             )
 
+    def test_inline_host_port_publication_is_denied(self) -> None:
+        changed = self.compose.replace(
+            '    expose:\n      - "9187"',
+            '    expose:\n      - "9187"\n    ports: ["0.0.0.0:9187:9187"]',
+        )
+        with self.assertRaises(SystemExit):
+            AUTHORITY.validate_postgres_operational_identity(
+                self.targets,
+                self.services,
+                changed,
+            )
+
+    def test_alias_on_database_network_does_not_satisfy_authority(self) -> None:
+        changed = self.compose.replace(
+            "      observability:\n        aliases:\n          - postgres-exporter\n"
+            "      database: {}",
+            "      observability: {}\n"
+            "      database:\n        aliases:\n          - postgres-exporter",
+        )
+        with self.assertRaises(SystemExit):
+            AUTHORITY.validate_postgres_operational_identity(
+                self.targets,
+                self.services,
+                changed,
+            )
+
+    def test_generated_bytecode_is_excluded_from_source_scan(self) -> None:
+        self.assertTrue(
+            AUTHORITY.is_ignored_source_path(
+                ROOT / "codestra" / "tests" / "__pycache__" / "validator.pyc"
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

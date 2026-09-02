@@ -31,6 +31,36 @@ def load_json(path: Path) -> object:
         fail(f"invalid JSON {path.relative_to(ROOT)}: {exc}")
 
 
+def is_ignored_source_path(path: Path) -> bool:
+    return (
+        path.suffix.lower()
+        in {".png", ".jpg", ".jpeg", ".gif", ".woff", ".woff2", ".pyc"}
+        or ".git" in path.parts
+        or "__pycache__" in path.parts
+    )
+
+
+def indented_block(text: str, header: str, indent: int) -> str | None:
+    """Return a YAML mapping block without accepting sibling content."""
+    lines = text.splitlines()
+    expected = " " * indent + header + ":"
+    for index, line in enumerate(lines):
+        if not line.startswith(expected):
+            continue
+        suffix = line[len(expected) :]
+        if suffix.strip():
+            return suffix.strip()
+        body: list[str] = []
+        for candidate in lines[index + 1 :]:
+            stripped = candidate.lstrip(" ")
+            candidate_indent = len(candidate) - len(stripped)
+            if stripped and candidate_indent <= indent:
+                break
+            body.append(candidate)
+        return "\n".join(body)
+    return None
+
+
 def validate_postgres_operational_identity(
     targets: object,
     services: str,
@@ -63,19 +93,22 @@ def validate_postgres_operational_identity(
     ):
         fail("services catalog does not use the private exporter identity")
 
-    match = re.search(
-        r"(?ms)^  postgres-exporter:\n"
-        r"(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|^networks:)",
-        compose,
-    )
-    if match is None:
+    service = indented_block(compose, "postgres-exporter", 2)
+    if service is None:
         fail("Compose PostgreSQL Exporter service is missing")
-    service = match.group("body")
-    if re.search(r"(?m)^    ports:\s*$", service):
+    if re.search(r"(?m)^    ports\s*:", service):
         fail("PostgreSQL Exporter must not publish a host port")
     if not re.search(r'(?m)^    expose:\n      - "9187"\s*$', service):
         fail("PostgreSQL Exporter must expose port 9187 privately")
-    if not re.search(r"(?m)^          - postgres-exporter\s*$", service):
+
+    networks = indented_block(service, "networks", 4)
+    if networks is None:
+        fail("Compose PostgreSQL Exporter networks are missing")
+    observability = indented_block(networks, "observability", 6)
+    if observability is None or not re.search(
+        r"(?m)^          - postgres-exporter\s*$",
+        observability,
+    ):
         fail("Compose private exporter alias is missing")
 
 
@@ -130,14 +163,7 @@ def validate() -> None:
     )
 
     for path in (ROOT / "codestra").rglob("*"):
-        if not path.is_file() or path.suffix.lower() in {
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".gif",
-            ".woff",
-            ".woff2",
-        }:
+        if not path.is_file() or is_ignored_source_path(path):
             continue
         if path.resolve() == ALIASES.resolve():
             continue
