@@ -36,6 +36,9 @@ def main() -> None:
         "codestra_observability",
         "middleware_staging",
     }
+    assert service["networks"]["codestra_observability"]["aliases"] == [
+        "prometheus-staging"
+    ]
     assert service["healthcheck"]["test"] == [
         "CMD",
         "/bin/promtool",

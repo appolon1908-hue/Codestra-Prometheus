@@ -39,7 +39,7 @@ services:
     networks:
       codestra_observability:
         aliases:
-          - prometheus
+          - prometheus-staging
       middleware_staging: {}
     healthcheck:
       test: ["CMD", "/bin/promtool", "check", "healthy"]
