@@ -44,7 +44,7 @@ def metrics_payload() -> bytes:
 
 def safety_document() -> dict[str, object]:
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "service": "middleware-api",
         "environment": "staging",
         "runtime_profile_id": "codestra-middleware-staging-v1",
@@ -57,6 +57,9 @@ def safety_document() -> dict[str, object]:
         "persistence": {"in_memory": False},
         "dispatch": {"outbox_enabled": False, "nats_mode": "disabled", "temporal_worker_mode": "disabled"},
         "external_effects": {name: False for name in collector.EXPECTED_EXTERNAL_EFFECT_KEYS},
+        "umbrella_controls": {
+            name: False for name in collector.EXPECTED_UMBRELLA_CONTROL_KEYS
+        },
         "production_dialing": "DISABLED",
         "production_activation_configured": False,
         "provider_effects_disabled": True,
@@ -120,12 +123,31 @@ class CollectorTests(unittest.TestCase):
         unknown["diagnostic"] = {"credential": "must-not-be-persisted"}
         with self.assertRaises(collector.EvidenceError):
             collector.validate_runtime_safety(json.dumps(unknown).encode(), SOURCE, DIGEST)
+        missing_umbrella = safety_document()
+        missing_umbrella.pop("umbrella_controls")
+        with self.assertRaises(collector.EvidenceError):
+            collector.validate_runtime_safety(
+                json.dumps(missing_umbrella).encode(), SOURCE, DIGEST
+            )
+        enabled_umbrella = safety_document()
+        enabled_umbrella["umbrella_controls"]["EXTERNAL_MODEL_CALLS_ENABLED"] = True
+        with self.assertRaises(collector.EvidenceError):
+            collector.validate_runtime_safety(
+                json.dumps(enabled_umbrella).encode(), SOURCE, DIGEST
+            )
 
     def test_runtime_safety_returns_allowlisted_projection(self):
         projected = collector.validate_runtime_safety(json.dumps(safety_document()).encode(), SOURCE, DIGEST)
         self.assertEqual(set(projected), collector.EXPECTED_RUNTIME_SAFETY_KEYS)
         self.assertEqual(set(projected["external_effects"]), collector.EXPECTED_EXTERNAL_EFFECT_KEYS)
         self.assertTrue(all(value is False for value in projected["external_effects"].values()))
+        self.assertEqual(
+            set(projected["umbrella_controls"]),
+            collector.EXPECTED_UMBRELLA_CONTROL_KEYS,
+        )
+        self.assertTrue(
+            all(value is False for value in projected["umbrella_controls"].values())
+        )
 
     def test_full_get_only_evidence_collection(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

@@ -77,6 +77,14 @@ EXPECTED_EXTERNAL_EFFECT_KEYS = {
     "UNRESTRICTED_CRAWLING",
 }
 
+EXPECTED_UMBRELLA_CONTROL_KEYS = {
+    "LIVE_ADVERTISING_ENABLED",
+    "EXTERNAL_DELIVERY_ENABLED",
+    "SOCIAL_PUBLISHING_ENABLED",
+    "EXTERNAL_MODEL_CALLS_ENABLED",
+    "N8N_EXTERNAL_PROVIDER_WRITES",
+}
+
 EXPECTED_RUNTIME_SAFETY_KEYS = {
     "schema_version",
     "service",
@@ -86,6 +94,7 @@ EXPECTED_RUNTIME_SAFETY_KEYS = {
     "persistence",
     "dispatch",
     "external_effects",
+    "umbrella_controls",
     "production_dialing",
     "production_activation_configured",
     "provider_effects_disabled",
@@ -368,7 +377,7 @@ def validate_runtime_safety(payload: bytes, expected_source: str, expected_diges
         raise EvidenceError("runtime-safety response is not JSON") from exc
     if not isinstance(data, dict) or set(data) != EXPECTED_RUNTIME_SAFETY_KEYS:
         raise EvidenceError("runtime-safety response contains missing or unexpected fields")
-    if data["schema_version"] != "1.0" or data["service"] != "middleware-api":
+    if data["schema_version"] != "1.1" or data["service"] != "middleware-api":
         raise EvidenceError("runtime-safety identity is invalid")
     if data["environment"] != "staging":
         raise EvidenceError("runtime environment is not staging")
@@ -399,6 +408,14 @@ def validate_runtime_safety(payload: bytes, expected_source: str, expected_diges
         raise EvidenceError("external-effects evidence is empty or incomplete")
     if any(value is not False for value in effects.values()):
         raise EvidenceError("one or more external effects are enabled")
+    umbrella_controls = data["umbrella_controls"]
+    if (
+        not isinstance(umbrella_controls, dict)
+        or set(umbrella_controls) != EXPECTED_UMBRELLA_CONTROL_KEYS
+    ):
+        raise EvidenceError("umbrella-control evidence is empty or incomplete")
+    if any(value is not False for value in umbrella_controls.values()):
+        raise EvidenceError("one or more umbrella controls are enabled")
     if data["production_dialing"] != "DISABLED":
         raise EvidenceError("production dialing is not disabled")
     if data["production_activation_configured"] is not False:
@@ -421,6 +438,9 @@ def validate_runtime_safety(payload: bytes, expected_source: str, expected_diges
         "persistence": {"in_memory": False},
         "dispatch": {"outbox_enabled": False, "nats_mode": "disabled", "temporal_worker_mode": "disabled"},
         "external_effects": {name: False for name in sorted(EXPECTED_EXTERNAL_EFFECT_KEYS)},
+        "umbrella_controls": {
+            name: False for name in sorted(EXPECTED_UMBRELLA_CONTROL_KEYS)
+        },
         "production_dialing": "DISABLED",
         "production_activation_configured": False,
         "provider_effects_disabled": True,
