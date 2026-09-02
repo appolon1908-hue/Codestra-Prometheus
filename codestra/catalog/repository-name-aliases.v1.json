@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "status": "PREPARED_NOT_RENAMED",
+  "identity_key": "repository_id",
+  "documentation_authority": "appolon1908-hue/documentaions:repository-name-migration.v1.json",
+  "postgres_exporter": {
+    "repository_id": 1350839865,
+    "repository": "appolon1908-hue/Codestra-Postgres-Exporter",
+    "public_hostname": null,
+    "private_service_identity": "postgres-exporter:9187",
+    "exposure": "PRIVATE_INTERNAL_ONLY"
+  },
+  "mappings": [
+    {
+      "repository_id": 1221155447,
+      "current_repository": "appolon1908-hue/Frontend-Resturant-",
+      "target_repository_after_cutover": "appolon1908-hue/restaurant-frontend",
+      "status": "PREPARED_NOT_RENAMED"
+    }
+  ]
+}
