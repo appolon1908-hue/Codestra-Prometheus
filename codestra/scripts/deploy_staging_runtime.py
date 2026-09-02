@@ -14,6 +14,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 COMPOSE = REPO / "codestra" / "deploy" / "compose.staging.yaml"
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+CANONICAL_REPOSITORY = "https://github.com/appolon1908-hue/Codestra-Prometheus.git"
+CANONICAL_DEVELOPMENT_REF = "refs/remotes/codestra-canonical/development"
 
 
 class PreflightError(RuntimeError):
@@ -48,8 +50,8 @@ def validate_source(source_sha: str, *, require_merged: bool) -> None:
                 "fetch",
                 "--quiet",
                 "--no-tags",
-                "origin",
-                "+refs/heads/development:refs/remotes/origin/development",
+                CANONICAL_REPOSITORY,
+                f"+refs/heads/development:{CANONICAL_DEVELOPMENT_REF}",
             ],
             cwd=REPO,
             check=False,
@@ -58,9 +60,15 @@ def validate_source(source_sha: str, *, require_merged: bool) -> None:
             timeout=30,
         )
         if refreshed.returncode != 0:
-            raise PreflightError("origin/development could not be refreshed")
+            raise PreflightError("canonical development branch could not be refreshed")
         merged = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", source_sha, "origin/development"],
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                source_sha,
+                CANONICAL_DEVELOPMENT_REF,
+            ],
             cwd=REPO,
             check=False,
             stdout=subprocess.DEVNULL,
@@ -68,7 +76,7 @@ def validate_source(source_sha: str, *, require_merged: bool) -> None:
             timeout=15,
         )
         if merged.returncode != 0:
-            raise PreflightError("source SHA is not merged into origin/development")
+            raise PreflightError("source SHA is not merged into canonical development")
 
 
 def validate_secret_file(path: Path) -> Path:

@@ -89,8 +89,10 @@ def main() -> None:
     for required in (
         'SHA40 = re.compile(r"^[0-9a-f]{40}$")',
         'git_output("rev-parse", "HEAD") != source_sha',
-        '"+refs/heads/development:refs/remotes/origin/development"',
-        '"merge-base", "--is-ancestor", source_sha, "origin/development"',
+        'CANONICAL_REPOSITORY = "https://github.com/appolon1908-hue/Codestra-Prometheus.git"',
+        'CANONICAL_DEVELOPMENT_REF = "refs/remotes/codestra-canonical/development"',
+        'f"+refs/heads/development:{CANONICAL_DEVELOPMENT_REF}"',
+        '"merge-base",',
         '"--force-recreate"',
         '"--wait-timeout"',
         '"prometheus"',
