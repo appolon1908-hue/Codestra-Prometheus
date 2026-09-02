@@ -28,6 +28,8 @@ services:
     volumes:
       - ../prometheus/prometheus-staging.yml:/etc/prometheus/prometheus.yml:ro
       - ../prometheus/targets:/etc/prometheus/targets:ro
+      - ../prometheus/rules/intake-recording-rules.yml:/etc/prometheus/rules-staging/intake-recording-rules.yml:ro
+      - ../prometheus/rules/intake-alerts.yml:/etc/prometheus/rules-staging/intake-alerts.yml:ro
       - prometheus_staging_data:/prometheus
     secrets:
       - source: middleware_staging_monitoring_client_secret

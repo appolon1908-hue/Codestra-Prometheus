@@ -12,6 +12,14 @@ import yaml
 CODESTRA = Path(__file__).resolve().parents[1]
 COMPOSE = CODESTRA / "deploy" / "compose.staging.yaml"
 PROMETHEUS_CONFIG = CODESTRA / "prometheus" / "prometheus-staging.yml"
+STAGING_RULES = {
+    "/etc/prometheus/rules-staging/intake-recording-rules.yml": (
+        CODESTRA / "prometheus" / "rules" / "intake-recording-rules.yml"
+    ),
+    "/etc/prometheus/rules-staging/intake-alerts.yml": (
+        CODESTRA / "prometheus" / "rules" / "intake-alerts.yml"
+    ),
+}
 IMAGE = (
     "prom/prometheus:v3.5.0@sha256:"
     "63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996"
@@ -46,14 +54,17 @@ def main() -> None:
         "check",
         "healthy",
     ]
-    assert not any(
-        "/etc/prometheus/rules" in str(volume)
-        for volume in service.get("volumes", [])
-    )
     prometheus_config = yaml.safe_load(
         PROMETHEUS_CONFIG.read_text(encoding="utf-8")
     )
-    assert "rule_files" not in prometheus_config
+    assert prometheus_config["rule_files"] == list(STAGING_RULES)
+    volumes = set(service["volumes"])
+    for mounted, source in STAGING_RULES.items():
+        relative = source.relative_to(CODESTRA)
+        assert f"../{relative}:{mounted}:ro" in volumes
+        rule_text = source.read_text(encoding="utf-8")
+        assert "production" not in rule_text.lower()
+        assert yaml.safe_load(rule_text)["groups"]
     assert service["secrets"] == [
         {
             "source": "middleware_staging_monitoring_client_secret",

@@ -10,6 +10,10 @@ global:
     deployment: intake-observability-staging
     prometheus_cluster: codestra-staging
 
+rule_files:
+  - /etc/prometheus/rules-staging/intake-recording-rules.yml
+  - /etc/prometheus/rules-staging/intake-alerts.yml
+
 scrape_configs:
   - job_name: prometheus-staging
     sample_limit: 100000
