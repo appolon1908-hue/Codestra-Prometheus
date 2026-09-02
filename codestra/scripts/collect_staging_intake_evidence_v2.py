@@ -103,6 +103,14 @@ def main() -> int:
         raise collector.EvidenceError(
             "evidence health token metadata does not match the refreshed credential"
         )
+    # The base collector requires credential rotation during the soak. Re-prove
+    # cross-scope denial with the credentials that are actually certified in
+    # the final evidence rather than carrying forward the initial-token result.
+    isolation = scope_isolation_checks(
+        base_url,
+        refreshed_metrics_token,
+        refreshed_health_token,
+    )
     evidence["schema_version"] = "1.1"
     evidence["checks"].update(isolation)
     evidence["token_evidence"]["scope_isolation"] = {

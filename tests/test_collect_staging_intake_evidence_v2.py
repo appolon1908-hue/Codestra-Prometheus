@@ -121,6 +121,7 @@ class Handler(BaseHTTPRequestHandler):
     metrics_token = token("metrics.read", "metrics")
     health_token = token("health.read", "health")
     prometheus_target = ""
+    cross_scope_requests: list[str] = []
 
     def log_message(self, *_args):
         pass
@@ -180,6 +181,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             if authorization == f"Bearer {self.health_token}":
+                self.cross_scope_requests.append("health:/metrics")
                 self.send_response(403)
                 self.end_headers()
                 return
@@ -198,6 +200,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             if authorization == f"Bearer {self.metrics_token}":
+                self.cross_scope_requests.append("metrics:/v1/runtime/safety")
                 self.send_response(403)
                 self.end_headers()
                 return
@@ -234,6 +237,7 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
         initial_health_token = token("health.read", "health-initial")
         Handler.metrics_token = initial_metrics_token
         Handler.health_token = initial_health_token
+        Handler.cross_scope_requests = []
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
@@ -331,6 +335,15 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     evidence["checks"]["token_scope_isolation"], "PASS"
+                )
+                self.assertEqual(
+                    Handler.cross_scope_requests,
+                    [
+                        "health:/metrics",
+                        "metrics:/v1/runtime/safety",
+                        "health:/metrics",
+                        "metrics:/v1/runtime/safety",
+                    ],
                 )
                 self.assertNotIn(initial_metrics_token, evidence_text)
                 self.assertNotIn(initial_health_token, evidence_text)
