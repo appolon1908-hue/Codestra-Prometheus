@@ -3,6 +3,7 @@ name: Stage 6 intake observability contract certification
 on:
   pull_request:
     paths:
+      - "codestra/prometheus/prometheus.yml"
       - "codestra/prometheus/prometheus-staging.yml"
       - "codestra/prometheus/targets/staging.json"
       - "codestra/scripts/collect_staging_intake_evidence.py"
@@ -20,6 +21,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "codestra/prometheus/prometheus.yml"
       - "codestra/prometheus/prometheus-staging.yml"
       - "codestra/prometheus/targets/staging.json"
       - "codestra/scripts/collect_staging_intake_evidence.py"
