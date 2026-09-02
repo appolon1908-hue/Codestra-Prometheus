@@ -71,6 +71,16 @@ def main() -> None:
     assert "privileged: true" not in text
     assert "klyrow" not in text
     assert "postal" not in text
+    deployer = (CODESTRA / "scripts" / "deploy_staging_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        'SHA40 = re.compile(r"^[0-9a-f]{40}$")',
+        'git_output("rev-parse", "HEAD") != source_sha',
+        '"merge-base", "--is-ancestor", source_sha, "origin/development"',
+        '("up", "-d", "--no-deps", "prometheus")',
+    ):
+        assert required in deployer
     print("PROMETHEUS_STAGING_RUNTIME_SOURCE=PASS")
     print("SECCOMP_DISABLED=NO")
 

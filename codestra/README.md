@@ -23,6 +23,11 @@ shared observability network plus the isolated Middleware staging network. The
 Middleware target remains `activation=pending` until the approved read-only
 identity and runtime endpoint have both been independently proven.
 
+Rendering or deployment must use
+`codestra/scripts/deploy_staging_runtime.py`. Deployment mode rejects a dirty
+checkout, a non-SHA label, a SHA other than the checked-out head, and a head not
+merged into `origin/development`; it then recreates only the Prometheus service.
+
 ## Immutable runtime preflight
 
 The Compose candidate no longer accepts one free-form image string. Each image is assembled as:
