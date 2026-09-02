@@ -6,7 +6,7 @@ services:
     container_name: codestra-prometheus-staging
     init: true
     restart: unless-stopped
-    user: "65534:65534"
+    user: "65534:0"
     read_only: true
     cap_drop:
       - ALL
@@ -34,7 +34,7 @@ services:
     secrets:
       - source: middleware_staging_monitoring_client_secret
         target: middleware-staging-monitoring-client-secret
-        mode: 0400
+        mode: 0440
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     networks:

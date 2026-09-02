@@ -47,15 +47,21 @@ files after the delay and rejects unchanged credentials before the second scrape
 or runtime-safety readback.
 
 The v2 collector is a non-executable library and refuses direct invocation.
-Run it only through the same root-protected source launcher used for deployment:
+Collection and deployment run only through the separately installed,
+root-protected source authority:
 
 ```text
-/usr/bin/python3 -I /opt/codestra-observability/prometheus-authority/codestra/scripts/deploy_staging_runtime.py --mode collect --source-sha <accepted-main-sha> -- <collector-options>
+/usr/bin/python3 -I /usr/local/libexec/codestra-prometheus-staging-authority.py --mode collect --source-sha <accepted-main-sha> -- <collector-options>
+/usr/bin/python3 -I /usr/local/libexec/codestra-prometheus-staging-authority.py --mode deploy --source-sha <accepted-main-sha> -- --secret-file <protected-client-secret>
 ```
 
-The launcher validates root identity, the complete protected checkout and
-scripts tree, clean exact Git head, and membership in refreshed canonical main
-before importing either collector module. Collector options must follow the
+The installed launcher validates its own protected path and exact canonical
+bytes before executing repository code. It fetches canonical `main` into a new
+root-private bare Git directory with empty templates and system/global
+configuration disabled; it never reads the checkout's `.git` directory or
+local Git configuration. It then verifies the requested SHA is merged, compares
+every file in the relevant execution closure byte-for-byte, and compiles only
+those verified bytes under isolated Python. Collector options must follow the
 standalone `--` boundary and include `--signing-key-file` and
 `--signature-output`. The private key must be
 below
@@ -78,17 +84,11 @@ and `up` series and prove that this exact readiness target is UP with a
 successful HTTP 200 scrape. Evidence requests explicitly ignore inherited proxy
 settings so bearer tokens cannot leave the private network boundary.
 
-Rendering or deployment must use
-`codestra/scripts/deploy_staging_runtime.py`. Deployment mode rejects a dirty
-checkout, a non-SHA label, a SHA other than the checked-out head, and a head not
-merged into protected `origin/main`; it then recreates only the Prometheus service.
-Never invoke that Python file as root from a user-owned or user-writable
-checkout. First fetch the accepted exact main SHA into a standalone checkout
-below a root-owned, non-group-writable, non-other-writable directory. The
-deployment preflight recursively enforces that protection for Git metadata,
-the entrypoint, Compose authority, rules, targets, and Prometheus configuration
-before Docker is invoked; Git worktrees and symlinks in that execution closure
-are rejected.
+Unprivileged CI may render with `codestra/scripts/deploy_staging_runtime.py`;
+that repository entrypoint does not offer deployment or collection. Privileged
+operations use only the installed authority above. It recreates only the
+Prometheus service, disables Compose `.env` loading, and rejects missing,
+modified, symbolic, writable, or extra files in the deployment closure.
 
 A root operator must prepare the protected source before running any repository
 code:
@@ -96,29 +96,29 @@ code:
 ```bash
 install -d -o root -g root -m 0755 /opt/codestra-observability
 install -d -o root -g root -m 0700 /opt/codestra-observability/prometheus-authority
-git -C /opt/codestra-observability/prometheus-authority init
-git -C /opt/codestra-observability/prometheus-authority remote add origin https://github.com/appolon1908-hue/Codestra-Prometheus.git
-git -C /opt/codestra-observability/prometheus-authority fetch --no-tags origin refs/heads/main
-git -C /opt/codestra-observability/prometheus-authority checkout --detach <accepted-main-sha>
+/usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null /usr/bin/git clone --no-checkout https://github.com/appolon1908-hue/Codestra-Prometheus.git /opt/codestra-observability/prometheus-authority
+/usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null /usr/bin/git -C /opt/codestra-observability/prometheus-authority checkout --detach <accepted-main-sha>
 chown -R root:root /opt/codestra-observability/prometheus-authority
 chmod -R go-w /opt/codestra-observability/prometheus-authority
-/usr/bin/python3 -I /opt/codestra-observability/prometheus-authority/codestra/scripts/deploy_staging_runtime.py ...
+install -d -o root -g root -m 0755 /usr/local/libexec
+install -o root -g root -m 0555 /opt/codestra-observability/prometheus-authority/codestra/scripts/staging_runtime_authority_launcher.py /usr/local/libexec/codestra-prometheus-staging-authority.py
 ```
 
-The mandatory `-I` interpreter mode removes the checkout and caller working
-directory from Python's import path before the entrypoint starts. Deployment
-preflight also rejects writable `codestra/` or `codestra/scripts/` parent
-directories, so the entrypoint cannot be replaced or shadow standard-library
-imports before its recursive source checks run. Privileged Git and Docker
-subprocesses use fixed root-owned system paths. Git receives only a sanitized
-environment with global/system configuration disabled, and Compose is invoked
-through the system plugin directly with no inherited `HOME`,
-`DOCKER_CONFIG`, or executable search path.
+Do not invoke any repository Python before installing the external launcher.
+The initial checkout is created inside the root-only empty directory using a
+fixed canonical URL and sanitized Git environment. The launcher's subsequent
+source checks use only a fresh private Git database, so committed or untracked
+checkout-local configuration, hooks, filters, credential helpers, and URL
+rewrites cannot participate. Privileged Git and Docker subprocesses use fixed
+root-owned system paths, and Compose receives no inherited `HOME`,
+`DOCKER_CONFIG`, `.env`, or executable search path.
 
-Deployment mode must run as root so the UID-65534-owned client-secret file can
-be checked without broadening its ownership or mode. It waits up to 120 seconds
-for the source-defined Prometheus healthcheck and reports PASS only after the
-container is healthy.
+Deployment mode requires a root-owned, root-group, mode-`0440`, single-link
+client-secret file under fully root-owned non-writable ancestry. Prometheus runs
+as `65534:0`, so it can read the group bit through the read-only secret mount
+while UID 65534 cannot chmod, overwrite, or replace the validated host file. It
+waits up to 120 seconds for the source-defined healthcheck and reports PASS only
+after the container is healthy.
 
 ## Immutable runtime preflight
 

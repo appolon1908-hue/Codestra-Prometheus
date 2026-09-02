@@ -3,21 +3,20 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import re
-import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 import yaml
 
-import deploy_staging_runtime as staging_runtime
 from deploy_staging_runtime import (
     PreflightError,
     validate_deployment_identity,
     validate_isolated_interpreter,
     validate_protected_checkout,
+    validate_secret_file,
 )
 
 
@@ -47,7 +46,7 @@ def main() -> None:
     assert service["image"] == IMAGE
     assert service["container_name"] == "codestra-prometheus-staging"
     assert service["init"] is True
-    assert service["user"] == "65534:65534"
+    assert service["user"] == "65534:0"
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
     assert service["security_opt"] == ["no-new-privileges:true"]
@@ -110,7 +109,7 @@ def main() -> None:
         {
             "source": "middleware_staging_monitoring_client_secret",
             "target": "middleware-staging-monitoring-client-secret",
-            "mode": 0o400,
+            "mode": 0o440,
         }
     ]
     assert not any(
@@ -138,6 +137,9 @@ def main() -> None:
     deployer = (CODESTRA / "scripts" / "deploy_staging_runtime.py").read_text(
         encoding="utf-8"
     )
+    authority = (
+        CODESTRA / "scripts" / "staging_runtime_authority_launcher.py"
+    ).read_text(encoding="utf-8")
     for required in (
         'SHA40 = re.compile(r"^[0-9a-f]{40}$")',
         'git_output("rev-parse", "HEAD") != source_sha',
@@ -145,90 +147,87 @@ def main() -> None:
         'CANONICAL_MAIN_REF = "refs/remotes/codestra-canonical/main"',
         'f"+refs/heads/main:{CANONICAL_MAIN_REF}"',
         '"merge-base",',
-        "validate_protected_checkout()",
-        "validate_isolated_interpreter()",
         'GIT = "/usr/bin/git"',
         'COMPOSE_BIN = "/usr/libexec/docker/cli-plugins/docker-compose"',
         "[GIT, *args]",
-        '[COMPOSE_BIN, "-f"',
+        '"--env-file",',
+        '"/dev/null",',
         '"GIT_CONFIG_NOSYSTEM": "1"',
         '"GIT_CONFIG_GLOBAL": "/dev/null"',
         '"DOCKER_CONFIG": "/nonexistent"',
         "secret != normalized",
         "not 16 <= len(normalized) <= 4096",
         'b"\\x00" in normalized',
+        "os.O_NOFOLLOW",
         '"--force-recreate"',
         '"--wait-timeout"',
         '"prometheus-staging"',
-        '("render", "deploy", "collect")',
         'repo / "codestra" / "scripts",',
         '"deployment and collection scripts"',
-        "collect_evidence(collector_args)",
-        "wrapper.run_from_trusted_launcher(collector_args)",
+        'choices=("render",)',
+        "run_deploy_from_trusted_launcher",
     ):
         assert required in deployer
-    assert deployer.index("validate_protected_checkout()") < deployer.index(
-        "collect_evidence(collector_args)"
-    )
-    assert deployer.index("validate_source(args.source_sha") < deployer.index(
-        "collect_evidence(collector_args)"
-    )
     assert "os.environ.copy()" not in deployer
-    events: list[object] = []
-    original_argv = sys.argv
-    sys.argv = [
-        "deploy_staging_runtime.py",
-        "--mode",
-        "collect",
-        "--source-sha",
-        "a" * 40,
-        "--",
-        "--base-url",
-        "http://middleware-intake-staging:8080",
-    ]
-    try:
-        with (
-            patch.object(
-                staging_runtime,
-                "validate_isolated_interpreter",
-                side_effect=lambda: events.append("isolated"),
-            ),
-            patch.object(
-                staging_runtime,
-                "validate_deployment_identity",
-                side_effect=lambda: events.append("identity"),
-            ),
-            patch.object(
-                staging_runtime,
-                "validate_protected_checkout",
-                side_effect=lambda: events.append("protected"),
-            ),
-            patch.object(
-                staging_runtime,
-                "validate_source",
-                side_effect=lambda sha, require_merged: events.append(
-                    ("source", sha, require_merged)
-                ),
-            ),
-            patch.object(
-                staging_runtime,
-                "collect_evidence",
-                side_effect=lambda args: events.append(("collect", tuple(args))),
-            ),
-        ):
-            assert staging_runtime.main() == 0
-    finally:
-        sys.argv = original_argv
-    assert events == [
-        "isolated",
-        "identity",
-        "protected",
-        ("source", "a" * 40, True),
-        (
-            "collect",
-            ("--base-url", "http://middleware-intake-staging:8080"),
-        ),
-    ]
+    secret_parameters = inspect.signature(validate_secret_file).parameters
+    assert secret_parameters["required_file_uid"].default == 0
+    assert secret_parameters["required_file_gid"].default == 0
+    for required in (
+        'INSTALLED_LAUNCHER = Path(',
+        '"/usr/local/libexec/codestra-prometheus-staging-authority.py"',
+        'CHECKOUT = Path("/opt/codestra-observability/prometheus-authority")',
+        'CANONICAL_REPOSITORY = (',
+        '"GIT_CONFIG_SYSTEM": "/dev/null"',
+        '"GIT_CONFIG_GLOBAL": "/dev/null"',
+        '"GIT_CONFIG_NOSYSTEM": "1"',
+        'cwd="/"',
+        'f"--git-dir={git_directory}"',
+        '"empty-git-template"',
+        '"merge-base",',
+        '"--is-ancestor",',
+        "read_protected_source(launcher",
+        "actual_prefix_files(checkout)",
+        "load_verified_module(",
+        "wrapper.collector = base",
+        "run_deploy_from_trusted_launcher",
+    ):
+        assert required in authority, required
+    assert "cwd=CHECKOUT" not in authority
+    assert 'cwd=REPO' not in authority
+    assert "os.environ.copy()" not in authority
+    with tempfile.TemporaryDirectory() as temporary:
+        protected_root = Path(temporary)
+        secret_directory = protected_root / "secrets"
+        secret_directory.mkdir()
+        secret = secret_directory / "client-secret"
+        secret.write_bytes(b"A" * 32)
+        secret.chmod(0o440)
+        validation_options = {
+            "required_file_uid": os.geteuid(),
+            "required_file_gid": os.getegid(),
+            "required_ancestry_uid": os.geteuid(),
+            "ancestry_root": protected_root,
+        }
+        validate_secret_file(secret, **validation_options)
+        secret.chmod(0o640)
+        try:
+            validate_secret_file(secret, **validation_options)
+        except PreflightError:
+            pass
+        else:
+            raise AssertionError("writable client-secret leaf was accepted")
+        secret.chmod(0o440)
+        symbolic_directory = protected_root / "symbolic-secrets"
+        symbolic_directory.symlink_to(secret_directory)
+        try:
+            validate_secret_file(
+                symbolic_directory / secret.name,
+                **validation_options,
+            )
+        except PreflightError:
+            pass
+        else:
+            raise AssertionError("symbolic client-secret ancestry was accepted")
     with tempfile.TemporaryDirectory() as temporary:
         protected = Path(temporary) / "authority"
         (protected / ".git").mkdir(parents=True)

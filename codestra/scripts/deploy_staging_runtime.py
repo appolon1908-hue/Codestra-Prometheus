@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
 import re
 import stat
@@ -15,9 +14,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 COMPOSE = REPO / "codestra" / "deploy" / "compose.staging.yaml"
-EVIDENCE_WRAPPER = (
-    REPO / "codestra" / "scripts" / "collect_staging_intake_evidence_v2.py"
-)
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 CANONICAL_REPOSITORY = "https://github.com/appolon1908-hue/Codestra-Prometheus.git"
 CANONICAL_MAIN_REF = "refs/remotes/codestra-canonical/main"
@@ -41,8 +37,8 @@ class PreflightError(RuntimeError):
 def validate_deployment_identity() -> None:
     if os.geteuid() != 0:
         raise PreflightError(
-            "staging Prometheus deployment must run as root so the UID-65534 "
-            "credential can be validated without weakening its mode"
+            "staging Prometheus deployment must run as root so the root-owned "
+            "credential can be validated without weakening its ownership"
         )
 
 
@@ -194,18 +190,79 @@ def validate_source(source_sha: str, *, require_merged: bool) -> None:
             raise PreflightError("source SHA is not merged into canonical main")
 
 
-def validate_secret_file(path: Path) -> Path:
+def validate_secret_ancestry(
+    directory: Path,
+    *,
+    required_uid: int = 0,
+    ancestry_root: Path = Path("/"),
+) -> None:
+    if not directory.is_absolute() or not ancestry_root.is_absolute():
+        raise PreflightError("metrics client secret ancestry must be absolute")
+    try:
+        directory.relative_to(ancestry_root)
+    except ValueError as exc:
+        raise PreflightError(
+            "metrics client secret is outside protected ancestry"
+        ) from exc
+    current = directory
+    while True:
+        _validate_protected_path(
+            current,
+            "metrics client secret ancestry",
+            required_uid,
+        )
+        if not current.is_dir():
+            raise PreflightError(
+                "metrics client secret ancestry must contain only directories"
+            )
+        if current == ancestry_root:
+            break
+        if current == current.parent:
+            raise PreflightError(
+                "metrics client secret protected ancestry root was not reached"
+            )
+        current = current.parent
+
+
+def validate_secret_file(
+    path: Path,
+    *,
+    required_file_uid: int = 0,
+    required_file_gid: int = 0,
+    required_ancestry_uid: int = 0,
+    ancestry_root: Path = Path("/"),
+) -> Path:
     if not path.is_absolute() or path.is_symlink():
         raise PreflightError("metrics client secret must be an absolute non-symlink file")
+    absolute = Path(os.path.abspath(path))
     resolved = path.resolve(strict=True)
+    if absolute != resolved:
+        raise PreflightError(
+            "metrics client secret ancestry must not contain symbolic links"
+        )
+    validate_secret_ancestry(
+        resolved.parent,
+        required_uid=required_ancestry_uid,
+        ancestry_root=ancestry_root,
+    )
     info = resolved.stat()
-    if not stat.S_ISREG(info.st_mode) or info.st_size < 16 or info.st_size > 4096:
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_size < 16
+        or info.st_size > 4096
+    ):
         raise PreflightError("metrics client secret file is missing or malformed")
-    if info.st_uid != 65534:
-        raise PreflightError("metrics client secret must be owned by Prometheus uid 65534")
-    if stat.S_IMODE(info.st_mode) not in {0o400, 0o600}:
-        raise PreflightError("metrics client secret mode must be 0400 or 0600")
-    secret = resolved.read_bytes()
+    if (info.st_uid, info.st_gid) != (required_file_uid, required_file_gid):
+        raise PreflightError("metrics client secret has the wrong owner or group")
+    if stat.S_IMODE(info.st_mode) != 0o440:
+        raise PreflightError("metrics client secret mode must be 0440")
+    descriptor = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            raise PreflightError("metrics client secret changed during validation")
+        secret = stream.read(4097)
     normalized = secret.strip()
     if (
         secret != normalized
@@ -216,106 +273,93 @@ def validate_secret_file(path: Path) -> Path:
     return resolved
 
 
-def collect_evidence(collector_args: list[str]) -> None:
-    """Load and run collector code only after the caller authenticates source."""
+def compose_environment(source_sha: str, secret_file: Path) -> dict[str, str]:
+    return {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/nonexistent",
+        "DOCKER_CONFIG": "/nonexistent",
+        "LC_ALL": "C",
+        "PROMETHEUS_SOURCE_SHA": source_sha,
+        "MIDDLEWARE_METRICS_CLIENT_SECRET_FILE": str(secret_file),
+    }
 
-    wrapper_spec = importlib.util.spec_from_file_location(
-        "codestra_protected_staging_evidence_wrapper",
-        EVIDENCE_WRAPPER,
+
+def render(source_sha: str, secret_file: Path) -> None:
+    result = subprocess.run(
+        [
+            COMPOSE_BIN,
+            "--env-file",
+            "/dev/null",
+            "-f",
+            str(COMPOSE),
+            "config",
+            "--quiet",
+        ],
+        cwd=REPO,
+        env=compose_environment(source_sha, secret_file),
+        check=False,
+        timeout=180,
     )
-    if wrapper_spec is None or wrapper_spec.loader is None:
-        raise PreflightError("protected evidence wrapper could not be loaded")
-    wrapper = importlib.util.module_from_spec(wrapper_spec)
-    wrapper_spec.loader.exec_module(wrapper)
-    if wrapper.run_from_trusted_launcher(collector_args) != 0:
-        raise PreflightError("staging Prometheus evidence collection failed")
+    if result.returncode != 0:
+        raise PreflightError("staging Prometheus render failed")
 
 
-def parse_args() -> tuple[argparse.Namespace, list[str]]:
-    raw_args = sys.argv[1:]
-    separator_present = "--" in raw_args
-    if separator_present:
-        separator = raw_args.index("--")
-        launcher_args = raw_args[:separator]
-        collector_args = raw_args[separator + 1 :]
-    else:
-        launcher_args = raw_args
-        collector_args = []
+def run_deploy_from_trusted_launcher(source_sha: str, argv: list[str]) -> int:
+    """Deploy after the external authority verified these exact module bytes."""
 
+    validate_isolated_interpreter()
+    validate_deployment_identity()
+    if not SHA40.fullmatch(source_sha):
+        raise PreflightError(
+            "source SHA must be exactly 40 lowercase hexadecimal characters"
+        )
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("render", "deploy", "collect"), required=True)
-    parser.add_argument("--source-sha", required=True)
-    parser.add_argument("--secret-file", type=Path)
-    args = parser.parse_args(launcher_args)
-    if args.mode == "collect":
-        if not separator_present or not collector_args:
-            raise PreflightError(
-                "collection arguments must follow a standalone -- separator"
-            )
-        if args.secret_file is not None:
-            raise PreflightError("collection mode does not accept --secret-file")
-    else:
-        if separator_present or collector_args:
-            raise PreflightError("collector arguments are valid only in collection mode")
-        if args.secret_file is None:
-            raise PreflightError("render and deploy modes require --secret-file")
-    return args, collector_args
-
-
-def main() -> int:
-    args, collector_args = parse_args()
-
-    if args.mode in {"deploy", "collect"}:
-        validate_isolated_interpreter()
-        validate_deployment_identity()
-        validate_protected_checkout()
-    validate_source(args.source_sha, require_merged=args.mode in {"deploy", "collect"})
-    if args.mode == "collect":
-        collect_evidence(collector_args)
-        print("PROMETHEUS_STAGING_COLLECT=PASS")
-        print(f"PROMETHEUS_SOURCE_SHA={args.source_sha}")
-        print("SECCOMP_DISABLED=NO")
-        return 0
-
-    secret_file = (
-        validate_secret_file(args.secret_file)
-        if args.mode == "deploy"
-        else args.secret_file
-    )
+    parser.add_argument("--secret-file", type=Path, required=True)
+    args = parser.parse_args(argv)
+    secret_file = validate_secret_file(args.secret_file)
     environment = {
         "PATH": "/usr/bin:/bin",
         "HOME": "/nonexistent",
         "DOCKER_CONFIG": "/nonexistent",
         "LC_ALL": "C",
-        "PROMETHEUS_SOURCE_SHA": args.source_sha,
+        "PROMETHEUS_SOURCE_SHA": source_sha,
         "MIDDLEWARE_METRICS_CLIENT_SECRET_FILE": str(secret_file),
     }
-    command = [COMPOSE_BIN, "-f", str(COMPOSE)]
-    if args.mode == "render":
-        command.extend(("config", "--quiet"))
-    else:
-        command.extend(
-            (
-                "up",
-                "-d",
-                "--no-deps",
-                "--force-recreate",
-                "--wait",
-                "--wait-timeout",
-                "120",
-                "prometheus-staging",
-            )
-        )
     result = subprocess.run(
-        command,
+        [
+            COMPOSE_BIN,
+            "--env-file",
+            "/dev/null",
+            "-f",
+            str(COMPOSE),
+            "up",
+            "-d",
+            "--no-deps",
+            "--force-recreate",
+            "--wait",
+            "--wait-timeout",
+            "120",
+            "prometheus-staging",
+        ],
         cwd=REPO,
         env=environment,
         check=False,
         timeout=180,
     )
     if result.returncode != 0:
-        raise PreflightError(f"staging Prometheus {args.mode} failed")
-    print(f"PROMETHEUS_STAGING_{args.mode.upper()}=PASS")
+        raise PreflightError("staging Prometheus deploy failed")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=("render",), required=True)
+    parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--secret-file", type=Path, required=True)
+    args = parser.parse_args()
+    validate_source(args.source_sha, require_merged=False)
+    render(args.source_sha, args.secret_file)
+    print("PROMETHEUS_STAGING_RENDER=PASS")
     print(f"PROMETHEUS_SOURCE_SHA={args.source_sha}")
     print("SECCOMP_DISABLED=NO")
     return 0

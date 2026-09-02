@@ -654,6 +654,8 @@ def validate(expected_activation: str = "pending") -> None:
 
     workflow = (REPO / ".github/workflows/stage6-intake-observability.yml").read_text()
     assert "collect_staging_intake_evidence_v2.py" in workflow
+    assert "staging_runtime_authority_launcher.py" in workflow
+    assert "test_staging_runtime_authority_launcher" in workflow
     assert "test_collect_staging_intake_evidence*.py" in workflow
     assert workflow.count("integration/staging-runtime-evidence-v1.json") == 2
     assert workflow.count("integration/staging-runtime-evidence-v1.sig") == 2
