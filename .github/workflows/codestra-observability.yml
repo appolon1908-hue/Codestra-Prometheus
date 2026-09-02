@@ -125,7 +125,9 @@ jobs:
           go build -trimpath -o ../.bin/promtool ./cmd/promtool
 
       - name: Validate Prometheus configuration
-        run: .bin/promtool check config codestra/prometheus/prometheus.yml
+        run: |
+          .bin/promtool check config codestra/prometheus/prometheus.yml
+          .bin/promtool check config codestra/prometheus/prometheus-staging.yml
 
       - name: Validate Prometheus rules
         run: .bin/promtool check rules codestra/prometheus/rules/*.yml
