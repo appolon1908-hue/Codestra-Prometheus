@@ -1,0 +1,31 @@
+name: Repository Name Authority
+
+on:
+  pull_request:
+    paths:
+      - 'codestra/catalog/repository-name-aliases.v1.json'
+      - 'codestra/catalog/services.yml'
+      - 'codestra/scripts/validate_repository_name_authority.py'
+      - '.github/workflows/repository-name-authority.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'codestra/catalog/repository-name-aliases.v1.json'
+      - 'codestra/catalog/services.yml'
+      - 'codestra/scripts/validate_repository_name_authority.py'
+      - '.github/workflows/repository-name-authority.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python codestra/scripts/validate_repository_name_authority.py
