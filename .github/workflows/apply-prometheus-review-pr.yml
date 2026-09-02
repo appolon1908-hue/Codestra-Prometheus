@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [staging]
     paths:
-      - "codestra/scripts/apply_production_review_patch.py"
+      - "codestra/scripts/apply_production_review_patch_v2.py"
       - ".github/workflows/apply-prometheus-review-pr.yml"
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
       - name: Apply idempotent source patch
         run: |
           set -Eeuo pipefail
-          python3 codestra/scripts/apply_production_review_patch.py
+          python3 codestra/scripts/apply_production_review_patch_v2.py
           git diff --check
 
       - name: Commit patch when required
