@@ -7,21 +7,38 @@ from the other protected endpoint before canonical evidence is accepted.
 """
 from __future__ import annotations
 
+import sys
+
+if __name__ == "__main__" and not sys.flags.isolated:
+    print(
+        "STAGING_INTAKE_EVIDENCE_V2=FAIL: invoke with /usr/bin/python3 -I",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
 import argparse
 import base64
 import contextlib
 import fcntl
 import hashlib
+import importlib.util
 import io
 import json
 import os
 import stat
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
-import collect_staging_intake_evidence as collector
+COLLECTOR_PATH = Path(__file__).with_name("collect_staging_intake_evidence.py")
+COLLECTOR_SPEC = importlib.util.spec_from_file_location(
+    "codestra_staging_intake_evidence_collector",
+    COLLECTOR_PATH,
+)
+if COLLECTOR_SPEC is None or COLLECTOR_SPEC.loader is None:
+    raise RuntimeError("unable to load the trusted base evidence collector")
+collector = importlib.util.module_from_spec(COLLECTOR_SPEC)
+COLLECTOR_SPEC.loader.exec_module(collector)
 
 METRICS_SCOPE = "metrics.read"
 HEALTH_SCOPE = "health.read"
@@ -34,6 +51,7 @@ OPENSSL_MODULES = "/usr/lib/x86_64-linux-gnu/ossl-modules"
 REQUIRED_SIGNING_OWNER_UID = 0
 EVIDENCE_OUTPUT_ROOT = Path("/var/lib/codestra/staging/prometheus-evidence")
 SIGNING_KEY_ROOT = Path("/var/lib/codestra/staging/prometheus-evidence-signing")
+REQUIRE_ISOLATED_INTERPRETER = True
 WRAPPER_ONLY_OPTIONS = {"--signing-key-file", "--signature-output"}
 
 
@@ -275,6 +293,10 @@ def sign_evidence(evidence: bytes, signing_key: Path, output: Path) -> None:
 
 
 def main() -> int:
+    if REQUIRE_ISOLATED_INTERPRETER and not sys.flags.isolated:
+        raise collector.EvidenceError(
+            "evidence collection requires /usr/bin/python3 -I"
+        )
     args = parse_wrapper_args(sys.argv[1:])
     base_url, _, _ = collector.validate_configured_base_url(args.base_url)
     validate_protected_output(args.output, must_be_absent=False)

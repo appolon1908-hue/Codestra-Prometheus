@@ -15,21 +15,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).parents[1]
-COLLECTOR_PATH = ROOT / "codestra/scripts/collect_staging_intake_evidence.py"
 WRAPPER_PATH = ROOT / "codestra/scripts/collect_staging_intake_evidence_v2.py"
-
-collector_spec = importlib.util.spec_from_file_location(
-    "collect_staging_intake_evidence", COLLECTOR_PATH
-)
-collector = importlib.util.module_from_spec(collector_spec)
-assert collector_spec and collector_spec.loader
-collector_spec.loader.exec_module(collector)
-sys.modules["collect_staging_intake_evidence"] = collector
 
 wrapper_spec = importlib.util.spec_from_file_location("collector_v2", WRAPPER_PATH)
 wrapper = importlib.util.module_from_spec(wrapper_spec)
 assert wrapper_spec and wrapper_spec.loader
 wrapper_spec.loader.exec_module(wrapper)
+collector = wrapper.collector
 
 SOURCE = "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
 DIGEST = "sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4"
@@ -369,6 +361,11 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                         ),
                         patch.object(wrapper, "EVIDENCE_OUTPUT_ROOT", root),
                         patch.object(wrapper, "SIGNING_KEY_ROOT", root),
+                        patch.object(
+                            wrapper,
+                            "REQUIRE_ISOLATED_INTERPRETER",
+                            False,
+                        ),
                         patch.dict(
                             os.environ,
                             {
@@ -472,6 +469,11 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                         ),
                     ),
                     patch.object(collector, "read_private_file") as read_secret,
+                    patch.object(
+                        wrapper,
+                        "REQUIRE_ISOLATED_INTERPRETER",
+                        False,
+                    ),
                 ):
                     with self.assertRaises(collector.EvidenceError):
                         wrapper.main()

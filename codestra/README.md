@@ -46,8 +46,10 @@ atomically renew both token files during the soak. The collector rereads both
 files after the delay and rejects unchanged credentials before the second scrape
 or runtime-safety readback.
 
-The v2 collector requires `--signing-key-file` and `--signature-output`. The
-private key must be below
+Invoke the v2 collector only as `/usr/bin/python3 -I`; it refuses a
+non-isolated interpreter before reading credentials or the signing key. It
+requires `--signing-key-file` and `--signature-output`. The private key must be
+below
 `/var/lib/codestra/staging/prometheus-evidence-signing`, root-owned with no
 group/other access, and must match
 `integration/staging-evidence-signing-public.pem`; it stays outside Git. The

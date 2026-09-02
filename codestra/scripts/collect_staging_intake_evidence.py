@@ -21,9 +21,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+UTC = timezone.utc
 
 REPO = Path(__file__).resolve().parents[2]
 TARGETS_PATH = REPO / "codestra/prometheus/targets/staging.json"
