@@ -16,6 +16,13 @@ Targets marked `activation=pending` are catalogued but deliberately not scraped.
 
 Promotion is `feature/* -> development -> test -> staging -> production -> main`. Merging does not deploy or enable live application behavior.
 
+The dedicated staging runtime authority is
+`codestra/deploy/compose.staging.yaml`. It deploys only Prometheus, publishes no
+host port, preserves the Docker default seccomp profile, and joins exactly the
+shared observability network plus the isolated Middleware staging network. The
+Middleware target remains `activation=pending` until the approved read-only
+identity and runtime endpoint have both been independently proven.
+
 ## Immutable runtime preflight
 
 The Compose candidate no longer accepts one free-form image string. Each image is assembled as:
