@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
+import deploy_staging_runtime as staging_runtime
 from deploy_staging_runtime import (
     PreflightError,
     validate_deployment_identity,
@@ -157,9 +160,75 @@ def main() -> None:
         '"--force-recreate"',
         '"--wait-timeout"',
         '"prometheus-staging"',
+        '("render", "deploy", "collect")',
+        'repo / "codestra" / "scripts",',
+        '"deployment and collection scripts"',
+        "collect_evidence(collector_args)",
+        "wrapper.run_from_trusted_launcher(collector_args)",
     ):
         assert required in deployer
+    assert deployer.index("validate_protected_checkout()") < deployer.index(
+        "collect_evidence(collector_args)"
+    )
+    assert deployer.index("validate_source(args.source_sha") < deployer.index(
+        "collect_evidence(collector_args)"
+    )
     assert "os.environ.copy()" not in deployer
+    events: list[object] = []
+    original_argv = sys.argv
+    sys.argv = [
+        "deploy_staging_runtime.py",
+        "--mode",
+        "collect",
+        "--source-sha",
+        "a" * 40,
+        "--",
+        "--base-url",
+        "http://middleware-intake-staging:8080",
+    ]
+    try:
+        with (
+            patch.object(
+                staging_runtime,
+                "validate_isolated_interpreter",
+                side_effect=lambda: events.append("isolated"),
+            ),
+            patch.object(
+                staging_runtime,
+                "validate_deployment_identity",
+                side_effect=lambda: events.append("identity"),
+            ),
+            patch.object(
+                staging_runtime,
+                "validate_protected_checkout",
+                side_effect=lambda: events.append("protected"),
+            ),
+            patch.object(
+                staging_runtime,
+                "validate_source",
+                side_effect=lambda sha, require_merged: events.append(
+                    ("source", sha, require_merged)
+                ),
+            ),
+            patch.object(
+                staging_runtime,
+                "collect_evidence",
+                side_effect=lambda args: events.append(("collect", tuple(args))),
+            ),
+        ):
+            assert staging_runtime.main() == 0
+    finally:
+        sys.argv = original_argv
+    assert events == [
+        "isolated",
+        "identity",
+        "protected",
+        ("source", "a" * 40, True),
+        (
+            "collect",
+            ("--base-url", "http://middleware-intake-staging:8080"),
+        ),
+    ]
     with tempfile.TemporaryDirectory() as temporary:
         protected = Path(temporary) / "authority"
         (protected / ".git").mkdir(parents=True)

@@ -46,9 +46,18 @@ atomically renew both token files during the soak. The collector rereads both
 files after the delay and rejects unchanged credentials before the second scrape
 or runtime-safety readback.
 
-Invoke the v2 collector only as `/usr/bin/python3 -I`; it refuses a
-non-isolated interpreter before reading credentials or the signing key. It
-requires `--signing-key-file` and `--signature-output`. The private key must be
+The v2 collector is a non-executable library and refuses direct invocation.
+Run it only through the same root-protected source launcher used for deployment:
+
+```text
+/usr/bin/python3 -I /opt/codestra-observability/prometheus-authority/codestra/scripts/deploy_staging_runtime.py --mode collect --source-sha <accepted-main-sha> -- <collector-options>
+```
+
+The launcher validates root identity, the complete protected checkout and
+scripts tree, clean exact Git head, and membership in refreshed canonical main
+before importing either collector module. Collector options must follow the
+standalone `--` boundary and include `--signing-key-file` and
+`--signature-output`. The private key must be
 below
 `/var/lib/codestra/staging/prometheus-evidence-signing`, root-owned with no
 group/other access, and must match

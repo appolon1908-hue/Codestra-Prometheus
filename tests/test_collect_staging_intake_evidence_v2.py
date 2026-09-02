@@ -21,7 +21,8 @@ wrapper_spec = importlib.util.spec_from_file_location("collector_v2", WRAPPER_PA
 wrapper = importlib.util.module_from_spec(wrapper_spec)
 assert wrapper_spec and wrapper_spec.loader
 wrapper_spec.loader.exec_module(wrapper)
-collector = wrapper.collector
+assert wrapper.collector is None
+collector = wrapper.initialize_collector()
 
 SOURCE = "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
 DIGEST = "sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4"
@@ -232,6 +233,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class ScopeIsolationCollectorTests(unittest.TestCase):
+    def test_direct_execution_refuses_before_loading_base_collector(self):
+        result = subprocess.run(
+            [sys.executable, str(WRAPPER_PATH)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("protected deploy_staging_runtime.py", result.stderr)
+
     def test_exact_scope_metadata_rejects_combined_or_wrong_scope(self):
         self.assertEqual(
             wrapper.exact_scope_metadata(token("metrics.read", "one"), "metrics.read")[

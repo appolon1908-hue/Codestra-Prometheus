@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import sys
 
-if __name__ == "__main__" and not sys.flags.isolated:
+if __name__ == "__main__":
     print(
-        "STAGING_INTAKE_EVIDENCE_V2=FAIL: invoke with /usr/bin/python3 -I",
+        "STAGING_INTAKE_EVIDENCE_V2=FAIL: invoke through the protected "
+        "deploy_staging_runtime.py --mode collect launcher",
         file=sys.stderr,
     )
     raise SystemExit(2)
@@ -31,14 +32,7 @@ from pathlib import Path
 from typing import Any
 
 COLLECTOR_PATH = Path(__file__).with_name("collect_staging_intake_evidence.py")
-COLLECTOR_SPEC = importlib.util.spec_from_file_location(
-    "codestra_staging_intake_evidence_collector",
-    COLLECTOR_PATH,
-)
-if COLLECTOR_SPEC is None or COLLECTOR_SPEC.loader is None:
-    raise RuntimeError("unable to load the trusted base evidence collector")
-collector = importlib.util.module_from_spec(COLLECTOR_SPEC)
-COLLECTOR_SPEC.loader.exec_module(collector)
+collector: Any | None = None
 
 METRICS_SCOPE = "metrics.read"
 HEALTH_SCOPE = "health.read"
@@ -53,6 +47,24 @@ EVIDENCE_OUTPUT_ROOT = Path("/var/lib/codestra/staging/prometheus-evidence")
 SIGNING_KEY_ROOT = Path("/var/lib/codestra/staging/prometheus-evidence-signing")
 REQUIRE_ISOLATED_INTERPRETER = True
 WRAPPER_ONLY_OPTIONS = {"--signing-key-file", "--signature-output"}
+
+
+def initialize_collector() -> Any:
+    """Load the sibling collector only after the trusted launcher preflight."""
+
+    global collector
+    if collector is not None:
+        return collector
+    collector_spec = importlib.util.spec_from_file_location(
+        "codestra_staging_intake_evidence_collector",
+        COLLECTOR_PATH,
+    )
+    if collector_spec is None or collector_spec.loader is None:
+        raise RuntimeError("unable to load the trusted base evidence collector")
+    loaded = importlib.util.module_from_spec(collector_spec)
+    collector_spec.loader.exec_module(loaded)
+    collector = loaded
+    return collector
 
 
 def exact_scope_metadata(token: str, expected_scope: str) -> dict[str, Any]:
@@ -292,12 +304,14 @@ def sign_evidence(evidence: bytes, signing_key: Path, output: Path) -> None:
         stream.write(encoded)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    initialize_collector()
     if REQUIRE_ISOLATED_INTERPRETER and not sys.flags.isolated:
         raise collector.EvidenceError(
             "evidence collection requires /usr/bin/python3 -I"
         )
-    args = parse_wrapper_args(sys.argv[1:])
+    effective_argv = sys.argv[1:] if argv is None else argv
+    args = parse_wrapper_args(effective_argv)
     base_url, _, _ = collector.validate_configured_base_url(args.base_url)
     validate_protected_output(args.output, must_be_absent=False)
     validate_protected_output(args.checksum_output, must_be_absent=False)
@@ -314,7 +328,7 @@ def main() -> int:
     original_argv = sys.argv
     captured = io.StringIO()
     try:
-        sys.argv = [original_argv[0], *collector_argv(original_argv[1:])]
+        sys.argv = [original_argv[0], *collector_argv(effective_argv)]
         with contextlib.redirect_stdout(captured):
             result = collector.main()
     finally:
@@ -373,9 +387,12 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def run_from_trusted_launcher(argv: list[str]) -> int:
+    """Execute after deploy_staging_runtime has authenticated source authority."""
+
+    initialize_collector()
     try:
-        raise SystemExit(main())
+        return main(argv)
     except collector.EvidenceError as exc:
         print(f"STAGING_INTAKE_EVIDENCE_V2=FAIL: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        return 1

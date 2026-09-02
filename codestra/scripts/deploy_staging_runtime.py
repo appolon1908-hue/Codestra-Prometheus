@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import stat
@@ -14,6 +15,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 COMPOSE = REPO / "codestra" / "deploy" / "compose.staging.yaml"
+EVIDENCE_WRAPPER = (
+    REPO / "codestra" / "scripts" / "collect_staging_intake_evidence_v2.py"
+)
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 CANONICAL_REPOSITORY = "https://github.com/appolon1908-hue/Codestra-Prometheus.git"
 CANONICAL_MAIN_REF = "refs/remotes/codestra-canonical/main"
@@ -113,14 +117,9 @@ def validate_protected_checkout(
         "deployment source parent",
         required_uid,
     )
-    _validate_protected_path(
+    _validate_protected_tree(
         repo / "codestra" / "scripts",
-        "deployment entrypoint parent",
-        required_uid,
-    )
-    _validate_protected_path(
-        repo / "codestra" / "scripts" / "deploy_staging_runtime.py",
-        "deployment entrypoint",
+        "deployment and collection scripts",
         required_uid,
     )
     _validate_protected_tree(
@@ -217,18 +216,67 @@ def validate_secret_file(path: Path) -> Path:
     return resolved
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("render", "deploy"), required=True)
-    parser.add_argument("--source-sha", required=True)
-    parser.add_argument("--secret-file", type=Path, required=True)
-    args = parser.parse_args()
+def collect_evidence(collector_args: list[str]) -> None:
+    """Load and run collector code only after the caller authenticates source."""
 
-    if args.mode == "deploy":
+    wrapper_spec = importlib.util.spec_from_file_location(
+        "codestra_protected_staging_evidence_wrapper",
+        EVIDENCE_WRAPPER,
+    )
+    if wrapper_spec is None or wrapper_spec.loader is None:
+        raise PreflightError("protected evidence wrapper could not be loaded")
+    wrapper = importlib.util.module_from_spec(wrapper_spec)
+    wrapper_spec.loader.exec_module(wrapper)
+    if wrapper.run_from_trusted_launcher(collector_args) != 0:
+        raise PreflightError("staging Prometheus evidence collection failed")
+
+
+def parse_args() -> tuple[argparse.Namespace, list[str]]:
+    raw_args = sys.argv[1:]
+    separator_present = "--" in raw_args
+    if separator_present:
+        separator = raw_args.index("--")
+        launcher_args = raw_args[:separator]
+        collector_args = raw_args[separator + 1 :]
+    else:
+        launcher_args = raw_args
+        collector_args = []
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=("render", "deploy", "collect"), required=True)
+    parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--secret-file", type=Path)
+    args = parser.parse_args(launcher_args)
+    if args.mode == "collect":
+        if not separator_present or not collector_args:
+            raise PreflightError(
+                "collection arguments must follow a standalone -- separator"
+            )
+        if args.secret_file is not None:
+            raise PreflightError("collection mode does not accept --secret-file")
+    else:
+        if separator_present or collector_args:
+            raise PreflightError("collector arguments are valid only in collection mode")
+        if args.secret_file is None:
+            raise PreflightError("render and deploy modes require --secret-file")
+    return args, collector_args
+
+
+def main() -> int:
+    args, collector_args = parse_args()
+
+    if args.mode in {"deploy", "collect"}:
         validate_isolated_interpreter()
         validate_deployment_identity()
         validate_protected_checkout()
-    validate_source(args.source_sha, require_merged=args.mode == "deploy")
+    validate_source(args.source_sha, require_merged=args.mode in {"deploy", "collect"})
+    if args.mode == "collect":
+        collect_evidence(collector_args)
+        print("PROMETHEUS_STAGING_COLLECT=PASS")
+        print(f"PROMETHEUS_SOURCE_SHA={args.source_sha}")
+        print("SECCOMP_DISABLED=NO")
+        return 0
+
     secret_file = (
         validate_secret_file(args.secret_file)
         if args.mode == "deploy"
