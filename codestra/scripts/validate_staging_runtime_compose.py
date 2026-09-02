@@ -12,6 +12,7 @@ import yaml
 CODESTRA = Path(__file__).resolve().parents[1]
 COMPOSE = CODESTRA / "deploy" / "compose.staging.yaml"
 PROMETHEUS_CONFIG = CODESTRA / "prometheus" / "prometheus-staging.yml"
+SERVICE_CATALOG = CODESTRA / "catalog" / "services.yml"
 STAGING_RULES = {
     "/etc/prometheus/rules-staging/intake-recording-rules.yml": (
         CODESTRA / "prometheus" / "rules" / "intake-recording-rules.yml"
@@ -58,6 +59,34 @@ def main() -> None:
         PROMETHEUS_CONFIG.read_text(encoding="utf-8")
     )
     assert prometheus_config["rule_files"] == list(STAGING_RULES)
+    alertmanagers = prometheus_config["alerting"]["alertmanagers"]
+    assert alertmanagers == [
+        {
+            "scheme": "http",
+            "timeout": "10s",
+            "static_configs": [{"targets": ["alertmanager:9093"]}],
+        }
+    ]
+    catalog = yaml.safe_load(SERVICE_CATALOG.read_text(encoding="utf-8"))
+    assert catalog["authorities"]["alert_routing"] == (
+        "appolon1908-hue/Codestra-Alertmanager"
+    )
+    approved_alertmanagers = [
+        item
+        for item in catalog["infrastructure_services"]
+        if item["repo"] == "appolon1908-hue/Codestra-Alertmanager"
+    ]
+    assert approved_alertmanagers == [
+        {
+            "repo": "appolon1908-hue/Codestra-Alertmanager",
+            "codestra_business": "platform",
+            "application": "observability",
+            "service": "alertmanager",
+            "endpoint": "alertmanager:9093",
+            "path": "/metrics",
+            "activation": "active",
+        }
+    ]
     volumes = set(service["volumes"])
     for mounted, source in STAGING_RULES.items():
         relative = source.relative_to(CODESTRA)

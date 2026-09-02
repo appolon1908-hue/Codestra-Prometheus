@@ -14,6 +14,16 @@ rule_files:
   - /etc/prometheus/rules-staging/intake-recording-rules.yml
   - /etc/prometheus/rules-staging/intake-alerts.yml
 
+alerting:
+  alert_relabel_configs:
+    - action: labeldrop
+      regex: prometheus_replica
+  alertmanagers:
+    - scheme: http
+      timeout: 10s
+      static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: prometheus-staging
     sample_limit: 100000
