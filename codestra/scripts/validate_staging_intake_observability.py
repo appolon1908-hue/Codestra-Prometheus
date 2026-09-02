@@ -17,6 +17,9 @@ REPO = Path(__file__).resolve().parents[2]
 CODESTRA = REPO / "codestra"
 EXPECTED_SOURCE = "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
 EXPECTED_DIGEST = "sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4"
+EXPECTED_PROMETHEUS_DIGEST = (
+    "sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996"
+)
 STAGING_TOKEN_URL = "https://auth-staging.codestra.co/realms/codestra/protocol/openid-connect/token"
 PRODUCTION_TOKEN_URL = "https://auth.codestra.co/realms/codestra/protocol/openid-connect/token"
 TARGETS_PATH = CODESTRA / "prometheus/targets/staging.json"
@@ -132,6 +135,7 @@ EXPECTED_MUST_VERIFY = {
     "staging_soak",
     "rollback_proof",
     "host_evidence_signature",
+    "effective_prometheus_runtime_security",
 }
 
 
@@ -289,10 +293,11 @@ def validate_runtime_evidence(contract: dict[str, object]) -> None:
         "operational_proofs",
         "prometheus_scrape",
         "runtime_safety",
+        "prometheus_runtime_security",
         "activation",
         "overall_result",
     }
-    assert evidence["schema_version"] == "1.1"
+    assert evidence["schema_version"] == "1.2"
     assert evidence["suite_id"] == "codestra-controlled-intake-monitoring-v1"
     assert evidence["evidence_type"] == "private-staging-runtime-certification"
     assert evidence["environment"] == "staging"
@@ -307,6 +312,36 @@ def validate_runtime_evidence(contract: dict[str, object]) -> None:
     assert evidence["target"]["business_writes_performed"] is False
     assert evidence["middleware_release"]["source_sha"] == EXPECTED_SOURCE
     assert evidence["middleware_release"]["image_digest"] == EXPECTED_DIGEST
+    runtime_security = evidence["prometheus_runtime_security"]
+    assert set(runtime_security) == {
+        "schema_version",
+        "container_identity_sha256",
+        "process_identity_sha256",
+        "source_sha",
+        "image_digest",
+        "no_new_privileges",
+        "seccomp_mode",
+        "seccomp_filters",
+        "networks",
+    }
+    assert runtime_security["schema_version"] == "1.0"
+    assert re.fullmatch(
+        r"sha256:[0-9a-f]{64}", runtime_security["container_identity_sha256"]
+    )
+    assert re.fullmatch(
+        r"sha256:[0-9a-f]{64}", runtime_security["process_identity_sha256"]
+    )
+    assert runtime_security["source_sha"] == evidence_control["collector_source_sha"]
+    assert re.fullmatch(r"[0-9a-f]{40}", runtime_security["source_sha"])
+    assert runtime_security["image_digest"] == EXPECTED_PROMETHEUS_DIGEST
+    assert runtime_security["no_new_privileges"] is True
+    assert runtime_security["seccomp_mode"] == "filter"
+    assert type(runtime_security["seccomp_filters"]) is int
+    assert runtime_security["seccomp_filters"] >= 1
+    assert runtime_security["networks"] == [
+        "codestra-intake-observability-staging_private",
+        "codestra-observability",
+    ]
     authority = contract["middleware_source_authority"]
     supply_chain = evidence["supply_chain"]
     assert supply_chain == {
@@ -600,6 +635,7 @@ def validate(expected_activation: str = "pending") -> None:
     assert len(must_verify) == len(EXPECTED_MUST_VERIFY)
     assert set(must_verify) == EXPECTED_MUST_VERIFY
     if expected_activation == "pending":
+        assert contract["staging_evidence"]["collector_source_sha"] is None
         assert contract["staging_evidence"]["checksum"] is None
         assert contract["staging_evidence"]["artifact_path"] is None
         assert contract["staging_evidence"]["signature_path"] is None
@@ -672,7 +708,9 @@ def validate(expected_activation: str = "pending") -> None:
         "health.read token /metrics",
         "metrics.read token /v1/runtime/safety",
         '"token_scope_isolation": "PASS"',
-        'evidence["schema_version"] = "1.1"',
+        'evidence["schema_version"] = "1.2"',
+        'runtime_security_verifier()',
+        'evidence["prometheus_runtime_security"]',
         "sign_evidence",
         "EXPECTED_SIGNING_KEY_ID",
     ):

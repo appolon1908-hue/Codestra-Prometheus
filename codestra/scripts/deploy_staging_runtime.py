@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -26,6 +27,10 @@ EXPECTED_NETWORKS = {
     "codestra-observability",
     "codestra-intake-observability-staging_private",
 }
+EXPECTED_IMAGE = (
+    "prom/prometheus:v3.5.0@sha256:"
+    "63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996"
+)
 GIT_ENVIRONMENT = {
     "PATH": "/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -282,12 +287,18 @@ def validate_secret_file(
 
 def compose_environment(source_sha: str, secret_file: Path) -> dict[str, str]:
     return {
+        **docker_environment(),
+        "PROMETHEUS_SOURCE_SHA": source_sha,
+        "MIDDLEWARE_METRICS_CLIENT_SECRET_FILE": str(secret_file),
+    }
+
+
+def docker_environment() -> dict[str, str]:
+    return {
         "PATH": "/usr/bin:/bin",
         "HOME": "/nonexistent",
         "DOCKER_CONFIG": "/nonexistent",
         "LC_ALL": "C",
-        "PROMETHEUS_SOURCE_SHA": source_sha,
-        "MIDDLEWARE_METRICS_CLIENT_SECRET_FILE": str(secret_file),
     }
 
 
@@ -349,7 +360,7 @@ def _read_process_status(pid: int) -> str:
 def validate_running_container_security(
     source_sha: str,
     environment: dict[str, str],
-) -> None:
+) -> dict[str, object]:
     before = _docker_inspect(environment)
     container_id = before.get("Id")
     state = before.get("State")
@@ -362,6 +373,8 @@ def validate_running_container_security(
         or not isinstance(state, dict)
         or state.get("Running") is not True
         or type(state.get("Pid")) is not int
+        or not isinstance(state.get("StartedAt"), str)
+        or not state.get("StartedAt")
         or not isinstance(host_config, dict)
         or not isinstance(network_settings, dict)
         or not isinstance(config, dict)
@@ -370,6 +383,8 @@ def validate_running_container_security(
     labels = config.get("Labels")
     if not isinstance(labels, dict) or labels.get("com.codestra.source.sha") != source_sha:
         raise PreflightError("deployed Prometheus source label did not match")
+    if config.get("Image") != EXPECTED_IMAGE:
+        raise PreflightError("deployed Prometheus image did not match")
     security_options = host_config.get("SecurityOpt")
     if (
         not isinstance(security_options, list)
@@ -382,6 +397,7 @@ def validate_running_container_security(
         raise PreflightError("deployed Prometheus network attachment was not exact")
 
     pid = state["Pid"]
+    started_at = state["StartedAt"]
     no_new_privileges, seccomp_mode, seccomp_filters = _kernel_security_values(
         _read_process_status(pid)
     )
@@ -404,10 +420,26 @@ def validate_running_container_security(
         or not isinstance(after_state, dict)
         or after_state.get("Running") is not True
         or after_state.get("Pid") != pid
+        or after_state.get("StartedAt") != started_at
         or not isinstance(after_networks, dict)
         or set(after_networks) != EXPECTED_NETWORKS
     ):
         raise PreflightError("deployed Prometheus changed during security verification")
+    return {
+        "schema_version": "1.0",
+        "container_identity_sha256": "sha256:"
+        + hashlib.sha256(container_id.encode("ascii")).hexdigest(),
+        "process_identity_sha256": "sha256:"
+        + hashlib.sha256(
+            f"{container_id}\0{pid}\0{started_at}".encode("utf-8")
+        ).hexdigest(),
+        "source_sha": source_sha,
+        "image_digest": EXPECTED_IMAGE.rsplit("@", 1)[1],
+        "no_new_privileges": True,
+        "seccomp_mode": "filter",
+        "seccomp_filters": seccomp_filters,
+        "networks": sorted(EXPECTED_NETWORKS),
+    }
 
 
 def remove_failed_prometheus(environment: dict[str, str]) -> bool:
@@ -466,14 +498,7 @@ def run_deploy_from_trusted_launcher(source_sha: str, argv: list[str]) -> int:
     parser.add_argument("--secret-file", type=Path, required=True)
     args = parser.parse_args(argv)
     secret_file = validate_secret_file(args.secret_file)
-    environment = {
-        "PATH": "/usr/bin:/bin",
-        "HOME": "/nonexistent",
-        "DOCKER_CONFIG": "/nonexistent",
-        "LC_ALL": "C",
-        "PROMETHEUS_SOURCE_SHA": source_sha,
-        "MIDDLEWARE_METRICS_CLIENT_SECRET_FILE": str(secret_file),
-    }
+    environment = compose_environment(source_sha, secret_file)
     result = subprocess.run(
         [
             COMPOSE_BIN,

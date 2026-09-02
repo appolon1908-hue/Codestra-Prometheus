@@ -39,7 +39,11 @@ class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
     def secure_inspection(source_sha: str = "a" * 40) -> dict[str, object]:
         return {
             "Id": "b" * 64,
-            "State": {"Running": True, "Pid": 1234},
+            "State": {
+                "Running": True,
+                "Pid": 1234,
+                "StartedAt": "2026-09-02T20:00:00.000000000Z",
+            },
             "HostConfig": {"SecurityOpt": ["no-new-privileges:true"]},
             "NetworkSettings": {
                 "Networks": {
@@ -47,7 +51,10 @@ class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
                     "codestra-intake-observability-staging_private": {},
                 }
             },
-            "Config": {"Labels": {"com.codestra.source.sha": source_sha}},
+            "Config": {
+                "Image": deployer.EXPECTED_IMAGE,
+                "Labels": {"com.codestra.source.sha": source_sha},
+            },
         }
 
     def test_repository_copy_refuses_before_parsing_operation_arguments(self):
@@ -206,7 +213,13 @@ class StagingRuntimeAuthorityLauncherTests(unittest.TestCase):
                 ),
             ),
         ):
-            deployer.validate_running_container_security("a" * 40, {})
+            receipt = deployer.validate_running_container_security("a" * 40, {})
+        self.assertEqual(receipt["source_sha"], "a" * 40)
+        self.assertEqual(receipt["seccomp_mode"], "filter")
+        self.assertTrue(receipt["no_new_privileges"])
+        self.assertEqual(receipt["networks"], sorted(deployer.EXPECTED_NETWORKS))
+        self.assertRegex(receipt["container_identity_sha256"], r"^sha256:[0-9a-f]{64}$")
+        self.assertRegex(receipt["process_identity_sha256"], r"^sha256:[0-9a-f]{64}$")
 
     def test_deploy_security_rejects_unconfined_or_changed_container(self):
         unconfined = self.secure_inspection()

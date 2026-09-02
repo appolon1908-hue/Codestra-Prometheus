@@ -26,6 +26,27 @@ collector = wrapper.initialize_collector()
 
 SOURCE = "9a96ff1651a324b98f3a7efd60b7a342983ded4e"
 DIGEST = "sha256:01a61e6c9761968bce04db855df565e9104338c2ba2056da570cacb9fd21f0f4"
+PROMETHEUS_SOURCE = "a" * 40
+PROMETHEUS_DIGEST = (
+    "sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996"
+)
+
+
+def runtime_security_receipt() -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "container_identity_sha256": "sha256:" + "5" * 64,
+        "process_identity_sha256": "sha256:" + "6" * 64,
+        "source_sha": PROMETHEUS_SOURCE,
+        "image_digest": PROMETHEUS_DIGEST,
+        "no_new_privileges": True,
+        "seccomp_mode": "filter",
+        "seccomp_filters": 1,
+        "networks": [
+            "codestra-intake-observability-staging_private",
+            "codestra-observability",
+        ],
+    }
 
 
 def signing_key(root: Path) -> tuple[Path, Path, str]:
@@ -398,12 +419,21 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                             },
                         ),
                     ):
-                        self.assertEqual(wrapper.main(), 0)
+                        self.assertEqual(
+                            wrapper.main(
+                                runtime_security_verifier=runtime_security_receipt
+                            ),
+                            0,
+                        )
                 finally:
                     sys.argv = old
                 evidence_text = output.read_text()
                 evidence = json.loads(evidence_text)
-                self.assertEqual(evidence["schema_version"], "1.1")
+                self.assertEqual(evidence["schema_version"], "1.2")
+                self.assertEqual(
+                    evidence["prometheus_runtime_security"],
+                    runtime_security_receipt(),
+                )
                 self.assertEqual(evidence["overall_result"], "PASS")
                 self.assertEqual(
                     evidence["token_evidence"]["metrics"]["scopes"],

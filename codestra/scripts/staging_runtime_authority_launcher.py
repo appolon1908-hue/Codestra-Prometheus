@@ -195,7 +195,9 @@ def initialize_canonical_authority(root: Path, source_sha: str) -> Path:
 
 def canonical_paths(git_directory: Path, source_sha: str, mode: str) -> tuple[str, ...]:
     if mode == "collect":
-        return tuple(sorted({LAUNCHER_SOURCE, *COLLECTOR_SOURCES}))
+        return tuple(
+            sorted({LAUNCHER_SOURCE, DEPLOYER_SOURCE, *COLLECTOR_SOURCES})
+        )
     if mode != "deploy":
         raise AuthorityError("unsupported privileged staging mode")
     encoded = trusted_git(
@@ -359,7 +361,31 @@ def dispatch(
         verified[COLLECTOR_SOURCES[1]],
     )
     wrapper.collector = base
-    return wrapper.run_from_trusted_launcher(operation_args)
+    deployer = load_verified_module(
+        "codestra_verified_prometheus_runtime_verifier",
+        checkout / DEPLOYER_SOURCE,
+        verified[DEPLOYER_SOURCE],
+    )
+
+    def verify_runtime_security() -> dict[str, object]:
+        try:
+            return deployer.validate_running_container_security(
+                source_sha,
+                deployer.docker_environment(),
+            )
+        except (
+            deployer.PreflightError,
+            OSError,
+            subprocess.TimeoutExpired,
+        ) as exc:
+            raise base.EvidenceError(
+                f"Prometheus runtime security verification failed: {exc}"
+            ) from exc
+
+    return wrapper.run_from_trusted_launcher(
+        operation_args,
+        verify_runtime_security,
+    )
 
 
 def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:

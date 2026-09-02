@@ -29,7 +29,7 @@ import os
 import stat
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 COLLECTOR_PATH = Path(__file__).with_name("collect_staging_intake_evidence.py")
 collector: Any | None = None
@@ -336,11 +336,18 @@ def sign_evidence(evidence: bytes, signing_key: Path, output: Path) -> None:
         stream.write(encoded)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    runtime_security_verifier: Callable[[], dict[str, object]] | None = None,
+) -> int:
     initialize_collector()
     if REQUIRE_ISOLATED_INTERPRETER and not sys.flags.isolated:
         raise collector.EvidenceError(
             "evidence collection requires /usr/bin/python3 -I"
+        )
+    if REQUIRE_ISOLATED_INTERPRETER and runtime_security_verifier is None:
+        raise collector.EvidenceError(
+            "evidence collection requires the protected runtime security verifier"
         )
     effective_argv = sys.argv[1:] if argv is None else argv
     args = parse_wrapper_args(effective_argv)
@@ -348,6 +355,9 @@ def main(argv: list[str] | None = None) -> int:
     validate_protected_output(args.output, must_be_absent=False)
     validate_protected_output(args.checksum_output, must_be_absent=False)
     validate_protected_output(args.signature_output, must_be_absent=True)
+    runtime_security_before = (
+        runtime_security_verifier() if runtime_security_verifier else None
+    )
     metrics_token = collector.read_private_file(args.metrics_token_file)
     health_token = collector.read_private_file(args.health_token_file)
     metrics_metadata = exact_scope_metadata(metrics_token, METRICS_SCOPE)
@@ -397,13 +407,22 @@ def main(argv: list[str] | None = None) -> int:
         refreshed_metrics_token,
         refreshed_health_token,
     )
-    evidence["schema_version"] = "1.1"
+    runtime_security_after = (
+        runtime_security_verifier() if runtime_security_verifier else None
+    )
+    if runtime_security_before != runtime_security_after:
+        raise collector.EvidenceError(
+            "Prometheus runtime security identity changed during evidence collection"
+        )
+    evidence["schema_version"] = "1.2"
     evidence["checks"].update(isolation)
     evidence["token_evidence"]["scope_isolation"] = {
         "metrics_token_exact_scope": METRICS_SCOPE,
         "health_token_exact_scope": HEALTH_SCOPE,
         "cross_scope_access_denied": True,
     }
+    if runtime_security_after is not None:
+        evidence["prometheus_runtime_security"] = runtime_security_after
 
     checksum = collector.canonical_write(args.output, evidence)
     args.checksum_output.parent.mkdir(parents=True, exist_ok=True)
@@ -419,12 +438,15 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def run_from_trusted_launcher(argv: list[str]) -> int:
+def run_from_trusted_launcher(
+    argv: list[str],
+    runtime_security_verifier: Callable[[], dict[str, object]],
+) -> int:
     """Execute after deploy_staging_runtime has authenticated source authority."""
 
     initialize_collector()
     try:
-        return main(argv)
+        return main(argv, runtime_security_verifier)
     except collector.EvidenceError as exc:
         print(f"STAGING_INTAKE_EVIDENCE_V2=FAIL: {exc}", file=sys.stderr)
         return 1

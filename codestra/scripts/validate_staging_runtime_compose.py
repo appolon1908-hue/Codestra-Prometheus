@@ -211,6 +211,10 @@ def main() -> None:
         "actual_prefix_files(checkout)",
         "load_verified_module(",
         "wrapper.collector = base",
+        "DEPLOYER_SOURCE, *COLLECTOR_SOURCES",
+        "verify_runtime_security",
+        "deployer.validate_running_container_security(",
+        "deployer.docker_environment()",
         "run_deploy_from_trusted_launcher",
     ):
         assert required in authority, required

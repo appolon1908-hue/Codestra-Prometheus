@@ -51,6 +51,7 @@
   "staging_evidence": {
     "collector_repository": "appolon1908-hue/Codestra-Prometheus",
     "collector_branch": "main",
+    "collector_source_sha": null,
     "artifact_path": null,
     "checksum": null,
     "signature_path": null,
@@ -75,7 +76,8 @@
       "all_external_effects_disabled",
       "staging_soak",
       "rollback_proof",
-      "host_evidence_signature"
+      "host_evidence_signature",
+      "effective_prometheus_runtime_security"
     ]
   },
   "reviewed_git_activation_evidence": {

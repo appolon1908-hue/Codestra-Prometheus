@@ -37,7 +37,7 @@ def runtime_evidence() -> dict[str, object]:
         "privacy_findings": [],
     }
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "suite_id": "codestra-controlled-intake-monitoring-v1",
         "evidence_type": "private-staging-runtime-certification",
         "generated_at": "2026-09-02T00:00:00+00:00",
@@ -53,6 +53,20 @@ def runtime_evidence() -> dict[str, object]:
             "source_sha": source.EXPECTED_SOURCE,
             "image_digest": source.EXPECTED_DIGEST,
             "schema_head": "0008_durable_communications",
+        },
+        "prometheus_runtime_security": {
+            "schema_version": "1.0",
+            "container_identity_sha256": "sha256:" + "5" * 64,
+            "process_identity_sha256": "sha256:" + "6" * 64,
+            "source_sha": "a" * 40,
+            "image_digest": source.EXPECTED_PROMETHEUS_DIGEST,
+            "no_new_privileges": True,
+            "seccomp_mode": "filter",
+            "seccomp_filters": 1,
+            "networks": [
+                "codestra-intake-observability-staging_private",
+                "codestra-observability",
+            ],
         },
         "supply_chain": {
             "release_manifest_verification": "PASS_IN_SIGNED_RELEASE_WORKFLOW",
@@ -195,6 +209,7 @@ def runtime_evidence() -> dict[str, object]:
 def activate_contract(contract: dict[str, object], evidence_checksum: str) -> None:
     contract["staging_evidence"].update(
         {
+            "collector_source_sha": "a" * 40,
             "artifact_path": "integration/staging-runtime-evidence-v1.json",
             "checksum": evidence_checksum,
             "signature_path": "integration/staging-runtime-evidence-v1.sig",
@@ -427,6 +442,29 @@ class StagingIntakeActivationContractTests(unittest.TestCase):
                 Path(directory),
                 write_evidence=True,
                 evidence_document=evidence,
+            )
+            with self.assertRaises(AssertionError):
+                source.validate("active")
+
+    def test_active_state_rejects_missing_or_disabled_runtime_security(self) -> None:
+        missing = runtime_evidence()
+        missing.pop("prometheus_runtime_security")
+        with tempfile.TemporaryDirectory() as directory:
+            self.prepare_active_fixture(
+                Path(directory),
+                write_evidence=True,
+                evidence_document=missing,
+            )
+            with self.assertRaises(AssertionError):
+                source.validate("active")
+
+        disabled = runtime_evidence()
+        disabled["prometheus_runtime_security"]["seccomp_mode"] = "disabled"
+        with tempfile.TemporaryDirectory() as directory:
+            self.prepare_active_fixture(
+                Path(directory),
+                write_evidence=True,
+                evidence_document=disabled,
             )
             with self.assertRaises(AssertionError):
                 source.validate("active")
