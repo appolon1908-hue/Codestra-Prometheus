@@ -19,6 +19,7 @@ class ProductionEvidenceAuthorityTests(unittest.TestCase):
             "collect_staging_intake_evidence_v2.py",
             '--authorization-change-id "${CHANGE_ID^^}"',
             '--authorization-reason-sha256 "$reason_sha256"',
+            '" ".join(os.environ["EXECUTION_REASON"].split())',
             "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
             "METHODS_USED=GET_ONLY",
             "BUSINESS_WRITES_PERFORMED=NO",
@@ -39,10 +40,12 @@ class ProductionEvidenceAuthorityTests(unittest.TestCase):
             'computed = "sha256:" + hashlib.sha256(evidence_bytes).hexdigest()',
             'evidence_document.get("schema_version") != "1.1"',
             'evidence_document.get("authorization") != expected_authorization',
+            'Execution reason SHA-256:',
             'sampled_metric_families',
             'generated_at < now - timedelta(hours=24)',
         ):
             self.assertIn(required, workflow)
+        self.assertNotIn("Why executed:", workflow)
 
     def test_production_discovery_is_environment_specific(self) -> None:
         config = (ROOT / "codestra/prometheus/prometheus.yml").read_text()

@@ -48,7 +48,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          reason="$(tr '\n\r\t' '   ' <<<"$EXECUTION_REASON" | xargs)"
+          reason="$(python3 - <<'PY'
+          import os
+          print(" ".join(os.environ["EXECUTION_REASON"].split()))
+          PY
+          )"
           test "${#reason}" -ge 40
           [[ "${CHANGE_ID^^}" =~ ^CHG-[A-Z0-9][A-Z0-9._-]{7,}$ ]]
           [[ "$EXPECTED_BRANCH_HEAD" =~ ^[0-9a-f]{40}$ ]]
@@ -63,8 +67,13 @@ jobs:
         run: |
           set -Eeuo pipefail
           install -d -m 0700 "$EVIDENCE_ROOT"
-          reason="$(tr '\n\r\t' '   ' <<<"$EXECUTION_REASON" | xargs)"
-          reason_sha256="sha256:$(printf '%s' "$reason" | sha256sum | cut -d' ' -f1)"
+          reason_sha256="$(python3 - <<'PY'
+          import hashlib
+          import os
+          reason = " ".join(os.environ["EXECUTION_REASON"].split())
+          print("sha256:" + hashlib.sha256(reason.encode("utf-8")).hexdigest())
+          PY
+          )"
           source_sha="$(jq -er '.middleware_source_authority.source_sha' integration/staging-activation-contract-v1.json)"
           image_digest="$(jq -er '.middleware_source_authority.immutable_image_digest' integration/staging-activation-contract-v1.json)"
           python3 codestra/scripts/collect_staging_intake_evidence_v2.py \
@@ -82,8 +91,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          reason="$(tr '\n\r\t' '   ' <<<"$EXECUTION_REASON" | xargs)"
-          reason_sha256="sha256:$(printf '%s' "$reason" | sha256sum | cut -d' ' -f1)"
+          reason_sha256="$(python3 - <<'PY'
+          import hashlib
+          import os
+          reason = " ".join(os.environ["EXECUTION_REASON"].split())
+          print("sha256:" + hashlib.sha256(reason.encode("utf-8")).hexdigest())
+          PY
+          )"
           test "$(stat -c '%a' "$EVIDENCE_ROOT/evidence.json")" = 600
           test "$(stat -c '%a' "$EVIDENCE_ROOT/evidence.sha256")" = 600
           computed="sha256:$(sha256sum "$EVIDENCE_ROOT/evidence.json" | cut -d' ' -f1)"

@@ -293,7 +293,9 @@ jobs:
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("## Controlled staging evidence references\n")
-              summary.write(f"- Why executed: {reason}\n- Exact head: `{actual_head}`\n")
+              summary.write(f"- Change ID: `{expected_authorization['change_id']}`\n")
+              summary.write(f"- Execution reason SHA-256: `{expected_authorization['execution_reason_sha256']}`\n")
+              summary.write(f"- Exact head: `{actual_head}`\n")
               summary.write(f"- Locked Middleware image: `{image}`\n- Runtime evidence: `{evidence}`\n")
               summary.write(f"- Evidence run: `{os.environ['STAGING_EVIDENCE_RUN_ID']}`\n- Evidence artifact: `{os.environ['STAGING_EVIDENCE_ARTIFACT_NAME']}`\n")
               summary.write("- Prometheus activation: **separate PR required**\n")
