@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -16,6 +17,9 @@ STAGING_TOKEN_URL = "https://auth-staging.codestra.co/realms/codestra/protocol/o
 PRODUCTION_TOKEN_URL = "https://auth.codestra.co/realms/codestra/protocol/openid-connect/token"
 TARGETS_PATH = CODESTRA / "prometheus/targets/staging.json"
 CONTRACT_PATH = REPO / "integration/staging-activation-contract-v1.json"
+EVIDENCE_REFERENCE_PATH = (
+    REPO / "integration/staging-runtime-evidence-reference-v1.json"
+)
 EXPECTED_STAGING_RULE_FILES = {
     "/etc/prometheus/rules-staging/intake-recording-rules.yml",
     "/etc/prometheus/rules-staging/intake-alerts.yml",
@@ -23,6 +27,7 @@ EXPECTED_STAGING_RULE_FILES = {
     "/etc/prometheus/rules-staging/security-alerts.yml",
     "/etc/prometheus/rules-staging/application-alerts.yml",
 }
+EVIDENCE_ARTIFACT = re.compile(r"^codestra-staging-intake-evidence-[1-9][0-9]*-[1-9][0-9]*$")
 
 
 def validate_reviewed_git_evidence(contract: dict[str, object]) -> None:
@@ -53,27 +58,63 @@ def validate_reviewed_git_evidence(contract: dict[str, object]) -> None:
     assert actual_checksum == expected_checksum
 
 
+def parse_timestamp(value: object) -> datetime:
+    assert isinstance(value, str)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None
+    return parsed.astimezone(UTC)
+
+
 def validate_staging_evidence(
-    evidence: dict[str, object], expected_activation: str
+    contract_evidence: dict[str, object], expected_activation: str
 ) -> None:
-    assert evidence["collector_repository"] == "appolon1908-hue/Codestra-Prometheus"
-    assert evidence["collector_branch"] == "development"
-    assert {"signed_release_manifest", "sigstore_identity"}.issubset(
-        set(evidence["must_verify"])
+    assert contract_evidence["collector_repository"] == (
+        "appolon1908-hue/Codestra-Prometheus"
     )
-    checksum = evidence["checksum"]
-    state = evidence["state"]
-    if expected_activation == "active":
-        assert state == "CERTIFIED_RUNTIME_EVIDENCE"
-        assert isinstance(checksum, str)
-        assert re.fullmatch(r"sha256:[0-9a-f]{64}", checksum)
+    assert contract_evidence["collector_branch"] == "development"
+    assert contract_evidence["reference_path"] == (
+        "integration/staging-runtime-evidence-reference-v1.json"
+    )
+    assert contract_evidence["checksum"] is None
+    assert contract_evidence["state"] == "PENDING_RUNTIME_EXECUTION"
+    assert {"signed_release_manifest", "sigstore_identity"}.issubset(
+        set(contract_evidence["must_verify"])
+    )
+
+    reference = json.loads(EVIDENCE_REFERENCE_PATH.read_text(encoding="utf-8"))
+    assert reference["schema_version"] == "1.0"
+    assert reference["repository"] == "appolon1908-hue/Codestra-Prometheus"
+    assert reference["environment"] == "staging"
+    assert reference["source_authority"] == {
+        "middleware_source_sha": EXPECTED_SOURCE,
+        "middleware_image_digest": EXPECTED_DIGEST,
+    }
+    assert reference["production_activation_authorized"] is False
+    assert reference["external_effects_enabled"] is False
+
+    state = reference["state"]
+    if state == "PENDING_RUNTIME_EXECUTION":
+        assert reference["evidence_checksum"] is None
+        assert reference["workflow_run_id"] is None
+        assert reference["artifact_name"] is None
+        assert reference["generated_at"] is None
+        assert reference["expires_at"] is None
+        assert reference["independent_review_complete"] is False
+        assert expected_activation == "pending"
         return
-    if checksum is None:
-        assert state == "PENDING_RUNTIME_EXECUTION"
-    else:
-        assert state == "CERTIFIED_RUNTIME_EVIDENCE"
-        assert isinstance(checksum, str)
-        assert re.fullmatch(r"sha256:[0-9a-f]{64}", checksum)
+
+    assert state == "CERTIFIED_RUNTIME_EVIDENCE"
+    assert re.fullmatch(
+        r"sha256:[0-9a-f]{64}", str(reference["evidence_checksum"])
+    )
+    assert isinstance(reference["workflow_run_id"], int)
+    assert reference["workflow_run_id"] > 0
+    assert EVIDENCE_ARTIFACT.fullmatch(str(reference["artifact_name"]))
+    generated_at = parse_timestamp(reference["generated_at"])
+    expires_at = parse_timestamp(reference["expires_at"])
+    assert generated_at < expires_at
+    assert datetime.now(UTC) < expires_at
+    assert reference["independent_review_complete"] is True
 
 
 def validate_production_target_isolation() -> None:
@@ -189,6 +230,7 @@ def validate(expected_activation: str = "pending") -> None:
     ).read_text(encoding="utf-8")
     assert "collect_staging_intake_evidence_v2.py" in workflow
     assert "test_collect_staging_intake_evidence*.py" in workflow
+    assert "staging-runtime-evidence-reference-v1.json" in workflow
     assert (
         "github.event.pull_request.base.sha || github.event.before" in workflow
     )
