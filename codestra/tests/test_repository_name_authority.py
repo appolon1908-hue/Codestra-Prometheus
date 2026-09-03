@@ -138,8 +138,8 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
             "codestra_business: restaurant, application: restaurant, "
             "service: restaurant-backend",
         )
-        record = AUTHORITY.inline_service_record(changed, "restaurant-backend")
-        self.assertNotEqual(record.get("repo"), AUTHORITY.CURRENT_REPOSITORY)
+        with self.assertRaises(SystemExit):
+            self.validate(services=changed)
 
     def test_generated_bytecode_is_excluded_from_source_scan(self) -> None:
         self.assertTrue(
