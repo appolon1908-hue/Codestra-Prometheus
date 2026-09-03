@@ -18,6 +18,7 @@ EXPECTED_SOURCE_COMMIT = "e06b2dc5a6149e20ca82fe936fb044a6dfe45958"
 EXPECTED_SOURCE_TREE = "9f3cc4b95e5d0ea24656c2c237a13aa26aa62f29"
 EXPECTED_RUNTIME_COMMIT = "8be3a9560fbdd18a94dedec4b747c35178177202"
 EXPECTED_RUNTIME_IMAGE = "docker.io/prom/prometheus@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996"
+EXPECTED_STAGE6_TMPFS = "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m"
 PERSISTENT_BRANCHES = ["main", "development", "test", "staging", "production"]
 
 
@@ -150,6 +151,13 @@ def validate_documents(
         raise ValueError("corporate validation is not consistently bound to the runtime image")
     if corporate_runtime.count(EXPECTED_RUNTIME_IMAGE) < 1:
         raise ValueError("corporate runtime validation is not bound to the runtime image")
+
+    stage6_marker = "- name: Execute Stage 6 alert evaluations with exact runtime promtool"
+    if stage6_marker not in corporate:
+        raise ValueError("Stage 6 alert evaluation step missing")
+    stage6_section = corporate.split(stage6_marker, 1)[1].split("\n      - name:", 1)[0]
+    if EXPECTED_STAGE6_TMPFS not in stage6_section:
+        raise ValueError("Stage 6 alert evaluation lacks bounded writable test storage")
 
     forbidden_source_workflow_tokens = (
         "contents: write",
