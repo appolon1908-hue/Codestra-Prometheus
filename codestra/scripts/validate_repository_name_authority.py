@@ -131,6 +131,12 @@ def validate_postgres_operational_identity(
     *,
     postgres_repository: str,
 ) -> None:
+    restaurant_service = inline_service_record(services, "restaurant-backend")
+    if restaurant_service.get("repo") != CURRENT_REPOSITORY:
+        fail("restaurant service record lost the current frontend repository")
+    if TARGET_REPOSITORY in services:
+        fail("services catalog uses the target restaurant frontend before cutover")
+
     if not isinstance(targets, list):
         fail("production targets root must be an array")
     postgres_targets = [
@@ -232,12 +238,6 @@ def validate() -> None:
         fail("Prometheus repository alias mapping does not match the approved migration")
 
     services = SERVICES.read_text(encoding="utf-8")
-    restaurant = inline_service_record(services, "restaurant-backend")
-    if restaurant.get("repo") != CURRENT_REPOSITORY:
-        fail("restaurant service record lost the current frontend repository")
-    if TARGET_REPOSITORY in services:
-        fail("services catalog uses the target restaurant frontend before cutover")
-
     validate_postgres_operational_identity(
         load_json(TARGETS),
         services,
