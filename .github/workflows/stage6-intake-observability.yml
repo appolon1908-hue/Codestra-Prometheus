@@ -3,8 +3,15 @@ name: Stage 6 intake observability contract certification
 on:
   pull_request:
     paths:
+      - "codestra/deploy/compose.staging.yaml"
+      - "codestra/prometheus/prometheus.yml"
       - "codestra/prometheus/prometheus-staging.yml"
       - "codestra/prometheus/targets/staging.json"
+      - "codestra/prometheus/rules/recording-rules.yml"
+      - "codestra/prometheus/rules/security-alerts.yml"
+      - "codestra/prometheus/rules/application-alerts.yml"
+      - "codestra/prometheus/rules/intake-recording-rules.yml"
+      - "codestra/prometheus/rules/intake-alerts.yml"
       - "codestra/scripts/collect_staging_intake_evidence.py"
       - "codestra/scripts/collect_staging_intake_evidence_v2.py"
       - "codestra/scripts/validate_staging_intake_observability.py"
@@ -19,8 +26,15 @@ on:
   push:
     branches: [development]
     paths:
+      - "codestra/deploy/compose.staging.yaml"
+      - "codestra/prometheus/prometheus.yml"
       - "codestra/prometheus/prometheus-staging.yml"
       - "codestra/prometheus/targets/staging.json"
+      - "codestra/prometheus/rules/recording-rules.yml"
+      - "codestra/prometheus/rules/security-alerts.yml"
+      - "codestra/prometheus/rules/application-alerts.yml"
+      - "codestra/prometheus/rules/intake-recording-rules.yml"
+      - "codestra/prometheus/rules/intake-alerts.yml"
       - "codestra/scripts/collect_staging_intake_evidence.py"
       - "codestra/scripts/collect_staging_intake_evidence_v2.py"
       - "codestra/scripts/validate_staging_intake_observability.py"
@@ -62,9 +76,10 @@ jobs:
           codestra/scripts/validate_staging_intake_observability_source.py
           codestra/scripts/validate_staging_intake_observability_activation.py
           codestra/scripts/validate_staging_intake_observability_contract.py
+          tests/test_staging_intake_observability_contract.py
       - name: Select fail-closed source or activation validation
         env:
-          ACTIVATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ACTIVATION_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python codestra/scripts/validate_staging_intake_observability_contract.py
       - run: python -m unittest discover -s tests -p 'test_collect_staging_intake_evidence*.py' -v
       - run: python -m unittest tests.test_staging_intake_observability_contract -v
