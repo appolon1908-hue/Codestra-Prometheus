@@ -44,6 +44,19 @@ EXPECTED_COMMAND = [
     "--query.timeout=2m",
 ]
 EXPECTED_ENTRYPOINT = ["/bin/prometheus"]
+FORBIDDEN_ROUTING_ENVIRONMENT_KEYS = {
+    "ALL_PROXY",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "all_proxy",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "HOSTALIASES",
+    "LOCALDOMAIN",
+    "RES_OPTIONS",
+}
 EXPECTED_READONLY_BIND_MOUNTS = {
     "/etc/prometheus/prometheus.yml": REPO
     / "codestra/prometheus/prometheus-staging.yml",
@@ -463,6 +476,32 @@ def _validate_runtime_mounts(document: dict[str, object]) -> str:
     return _runtime_configuration_sha256()
 
 
+def _validate_runtime_routing_controls(
+    host_config: dict[str, object],
+    config: dict[str, object],
+) -> None:
+    """Reject container-local target-routing overrides before evidence is signed."""
+
+    for key in ("ExtraHosts", "Dns", "DnsOptions", "DnsSearch", "Links"):
+        value = host_config.get(key)
+        if value not in (None, [], {}):
+            raise PreflightError(
+                "deployed Prometheus contains host or DNS routing overrides"
+            )
+    environment = config.get("Env")
+    if environment is None:
+        return
+    if not isinstance(environment, list) or not all(
+        isinstance(item, str) for item in environment
+    ):
+        raise PreflightError("deployed Prometheus environment was malformed")
+    names = {item.partition("=")[0] for item in environment}
+    if names & FORBIDDEN_ROUTING_ENVIRONMENT_KEYS:
+        raise PreflightError(
+            "deployed Prometheus contains proxy or name-resolution overrides"
+        )
+
+
 def validate_running_container_security(
     source_sha: str,
     environment: dict[str, str],
@@ -519,6 +558,7 @@ def validate_running_container_security(
         or (host_config.get("PortBindings") or {}) != {}
     ):
         raise PreflightError("deployed Prometheus runtime configuration was not exact")
+    _validate_runtime_routing_controls(host_config, config)
     security_options = host_config.get("SecurityOpt")
     if (
         not isinstance(security_options, list)
