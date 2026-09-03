@@ -62,7 +62,7 @@ class RepositoryAliasAuthorityTests(unittest.TestCase):
 
     def test_public_exporter_hostname_is_rejected(self) -> None:
         aliases = copy.deepcopy(self.aliases)
-        aliases["postgres_exporter"]["public_hostname"] = "pgex.codestra.media"
+        aliases["postgres_exporter"]["public_hostname"] = "metrics.example.test"
         with self.assertRaisesRegex(authority.AuthorityError, "Exporter authority drifted"):
             self.validate(aliases=aliases)
 
@@ -80,7 +80,7 @@ class RepositoryAliasAuthorityTests(unittest.TestCase):
             "image": "example.invalid/exporter@sha256:" + "0" * 64,
             "expose": ["9187"],
         }
-        with self.assertRaisesRegex(authority.AuthorityError, "may not own"):
+        with self.assertRaisesRegex(authority.AuthorityError, "may own only"):
             self.validate(compose=compose)
 
     def test_restaurant_repository_cannot_change_before_cutover(self) -> None:
@@ -99,9 +99,34 @@ class RepositoryAliasAuthorityTests(unittest.TestCase):
 
     def test_stale_public_hostname_in_operational_source_is_rejected(self) -> None:
         sources = dict(self.sources)
-        sources["codestra/prometheus/prometheus.yml"] += "\n# pgex.codestra.media\n"
+        sources["codestra/prometheus/prometheus.yml"] += (
+            "\n# " + "pgex" + ".codestra.media\n"
+        )
         with self.assertRaisesRegex(authority.AuthorityError, "retired public"):
             self.validate(sources=sources)
+
+    def test_encoded_public_hostname_variants_are_rejected(self) -> None:
+        variants = (
+            "https://" + "pgex" + "%2e" + "codestra.media/metrics",
+            "https://" + "pgex" + "%252e" + "codestra.media/metrics",
+            "https://" + "pgex" + "&#46;" + "codestra.media/metrics",
+            "pgex" + "\u3002" + "codestra.media",
+        )
+        for value in variants:
+            with self.subTest(value=value):
+                sources = dict(self.sources)
+                sources["codestra/prometheus/prometheus.yml"] += f"\n# {value}\n"
+                with self.assertRaisesRegex(authority.AuthorityError, "retired public"):
+                    self.validate(sources=sources)
+
+    def test_json_escaped_public_hostname_is_rejected_after_decode(self) -> None:
+        sources = dict(self.sources)
+        sources["codestra/prometheus/targets/production.json"] = (
+            r'[{"targets":["pgex\u002ecodestra.media:9187"],'
+            r'"labels":{"service":"postgres-exporter"}}]'
+        )
+        with self.assertRaisesRegex(authority.AuthorityError, "retired public"):
+            authority.validate_operational_hostnames(sources)
 
     def test_documentation_repository_id_drift_is_rejected(self) -> None:
         aliases = copy.deepcopy(self.aliases)
@@ -110,12 +135,35 @@ class RepositoryAliasAuthorityTests(unittest.TestCase):
             self.validate(aliases=aliases)
 
     def test_name_resolution_override_is_rejected(self) -> None:
-        compose = copy.deepcopy(self.compose)
-        compose["services"]["prometheus"]["extra_hosts"] = [
-            "postgres-exporter:203.0.113.10"
-        ]
-        with self.assertRaisesRegex(authority.AuthorityError, "override private name resolution"):
-            self.validate(compose=compose)
+        for field, value in (
+            ("extra_hosts", ["postgres-exporter:203.0.113.10"]),
+            ("dns", ["203.0.113.53"]),
+            ("hostname", "postgres-exporter"),
+            ("extends", {"file": "base.yml", "service": "base"}),
+        ):
+            compose = copy.deepcopy(self.compose)
+            compose["services"]["prometheus"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                authority.AuthorityError,
+                "override private name resolution",
+            ):
+                self.validate(compose=compose)
+
+    def test_resolver_file_mounts_are_rejected(self) -> None:
+        cases = (
+            ("volumes", ["./hosts:/etc/hosts:ro"]),
+            ("configs", [{"source": "hosts", "target": "/etc/hosts"}]),
+            ("secrets", [{"source": "resolver", "target": "/etc/resolv.conf"}]),
+            ("tmpfs", ["/etc:rw,size=1m"]),
+        )
+        for field, value in cases:
+            compose = copy.deepcopy(self.compose)
+            compose["services"]["prometheus"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                authority.AuthorityError,
+                "resolver path",
+            ):
+                self.validate(compose=compose)
 
     def test_duplicate_json_keys_are_rejected(self) -> None:
         with self.assertRaisesRegex(authority.AuthorityError, "duplicate JSON key"):
