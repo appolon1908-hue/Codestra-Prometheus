@@ -19,6 +19,7 @@ COMPOSE = ROOT / "codestra" / "compose.yaml"
 CURRENT_REPOSITORY = "appolon1908-hue/Frontend-Resturant-"
 TARGET_REPOSITORY = "appolon1908-hue/restaurant-frontend"
 PRIVATE_POSTGRES_IDENTITY = "postgres-exporter:9187"
+PRIVATE_POSTGRES_HOST = "postgres-exporter"
 FORBIDDEN_POSTGRES_HOST = "pgex" + ".codestra.media"
 
 
@@ -134,15 +135,24 @@ def catalog_service_record(
     return records[0]
 
 
-def compose_service_record(
-    compose_document: dict[str, Any],
-    service_name: str,
-) -> dict[str, Any]:
+def compose_services(compose_document: dict[str, Any]) -> dict[str, dict[str, Any]]:
     services = compose_document.get("services")
     if not isinstance(services, dict):
         fail("Compose services mapping is missing")
+    result: dict[str, dict[str, Any]] = {}
+    for name, value in services.items():
+        if not isinstance(name, str) or not isinstance(value, dict):
+            fail("Compose services mapping contains an invalid service")
+        result[name] = value
+    return result
+
+
+def compose_service_record(
+    services: dict[str, dict[str, Any]],
+    service_name: str,
+) -> dict[str, Any]:
     value = services.get(service_name)
-    if not isinstance(value, dict):
+    if value is None:
         fail(f"Compose {service_name} service is missing")
     return value
 
@@ -169,6 +179,93 @@ def network_aliases(network_value: object, service_name: str, network: str) -> s
     return set(aliases)
 
 
+def service_network_aliases(
+    service: dict[str, Any],
+    service_name: str,
+    network: str,
+) -> set[str]:
+    networks = service.get("networks")
+    if isinstance(networks, dict):
+        if network not in networks:
+            return set()
+        return network_aliases(networks.get(network), service_name, network)
+    if isinstance(networks, list):
+        if not all(isinstance(item, str) for item in networks):
+            fail(f"Compose {service_name} networks are invalid")
+        return set() if network in networks else set()
+    if networks is None:
+        return set()
+    fail(f"Compose {service_name} networks are invalid")
+    return set()
+
+
+def validate_private_postgres_resolution(
+    services: dict[str, dict[str, Any]],
+    prometheus_service: dict[str, Any],
+) -> None:
+    """Keep the private exporter name unshadowed inside Prometheus."""
+
+    for field in (
+        "extra_hosts",
+        "links",
+        "external_links",
+        "dns",
+        "dns_opt",
+        "dns_search",
+        "network_mode",
+    ):
+        if field in prometheus_service:
+            fail(
+                "Prometheus may not override private PostgreSQL Exporter name "
+                f"resolution through {field}"
+            )
+
+    sensitive_mounts = {"/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf"}
+    for volume in prometheus_service.get("volumes", []):
+        target: str | None = None
+        if isinstance(volume, str):
+            pieces = volume.split(":")
+            if len(pieces) >= 2:
+                target = pieces[1]
+        elif isinstance(volume, dict):
+            value = volume.get("target")
+            target = value if isinstance(value, str) else None
+        if target in sensitive_mounts:
+            fail(
+                "Prometheus may not replace system name-resolution files: "
+                f"{target}"
+            )
+
+    owners: set[str] = set()
+    for service_name, service in services.items():
+        networks = service.get("networks")
+        joined = False
+        if isinstance(networks, dict):
+            joined = "observability" in networks
+        elif isinstance(networks, list):
+            joined = "observability" in networks
+        elif networks is not None:
+            fail(f"Compose {service_name} networks are invalid")
+        if not joined:
+            continue
+
+        aliases = service_network_aliases(service, service_name, "observability")
+        claims_private_name = (
+            service_name == PRIVATE_POSTGRES_HOST
+            or PRIVATE_POSTGRES_HOST in aliases
+            or service.get("container_name") == PRIVATE_POSTGRES_HOST
+            or service.get("hostname") == PRIVATE_POSTGRES_HOST
+        )
+        if claims_private_name:
+            owners.add(service_name)
+
+    if owners != {PRIVATE_POSTGRES_HOST}:
+        fail(
+            "private PostgreSQL Exporter name must have one observability-network "
+            f"owner, found {sorted(owners)}"
+        )
+
+
 def validate_postgres_operational_identity(
     targets: object,
     services: str,
@@ -184,6 +281,7 @@ def validate_postgres_operational_identity(
         load_yaml_text(compose, "codestra/compose.yaml"),
         "Compose document",
     )
+    compose_service_map = compose_services(compose_document)
 
     restaurant_service = catalog_service_record(catalog, "restaurant-backend")
     if restaurant_service.get("repo") != CURRENT_REPOSITORY:
@@ -220,7 +318,10 @@ def validate_postgres_operational_identity(
     if authorities.get("postgres_exporter") != postgres_repository:
         fail("services catalog PostgreSQL Exporter authority drifted")
 
-    exporter_service = compose_service_record(compose_document, "postgres-exporter")
+    exporter_service = compose_service_record(
+        compose_service_map,
+        "postgres-exporter",
+    )
     if "extends" in exporter_service:
         fail(
             "PostgreSQL Exporter may not use Compose extends because inherited "
@@ -243,16 +344,17 @@ def validate_postgres_operational_identity(
         "postgres-exporter",
         "observability",
     )
-    if "postgres-exporter" not in exporter_aliases:
+    if PRIVATE_POSTGRES_HOST not in exporter_aliases:
         fail("Compose private exporter alias is missing")
 
-    prometheus_service = compose_service_record(compose_document, "prometheus")
+    prometheus_service = compose_service_record(compose_service_map, "prometheus")
     prometheus_networks = network_names(
         prometheus_service.get("networks"),
         "prometheus",
     )
     if "observability" not in prometheus_networks:
         fail("Prometheus must share the observability network with PostgreSQL Exporter")
+    validate_private_postgres_resolution(compose_service_map, prometheus_service)
 
 
 def validate() -> None:
