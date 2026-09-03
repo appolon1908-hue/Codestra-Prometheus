@@ -13,6 +13,9 @@ global:
 rule_files:
   - /etc/prometheus/rules-staging/intake-recording-rules.yml
   - /etc/prometheus/rules-staging/intake-alerts.yml
+  - /etc/prometheus/rules-staging/recording-rules.yml
+  - /etc/prometheus/rules-staging/security-alerts.yml
+  - /etc/prometheus/rules-staging/application-alerts.yml
 
 alerting:
   alert_relabel_configs:
