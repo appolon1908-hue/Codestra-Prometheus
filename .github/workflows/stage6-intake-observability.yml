@@ -22,6 +22,7 @@ on:
       - "tests/test_collect_staging_intake_evidence.py"
       - "tests/test_collect_staging_intake_evidence_v2.py"
       - "tests/test_staging_runtime_authority_launcher.py"
+      - "tests/test_prometheus_runtime_routing_controls.py"
       - ".github/workflows/stage6-intake-observability.yml"
   push:
     branches: [main]
@@ -45,6 +46,7 @@ on:
       - "tests/test_collect_staging_intake_evidence.py"
       - "tests/test_collect_staging_intake_evidence_v2.py"
       - "tests/test_staging_runtime_authority_launcher.py"
+      - "tests/test_prometheus_runtime_routing_controls.py"
       - ".github/workflows/stage6-intake-observability.yml"
 
 permissions:
@@ -78,12 +80,14 @@ jobs:
           codestra/scripts/validate_staging_intake_observability_source.py
           codestra/scripts/validate_staging_intake_observability_activation.py
           codestra/scripts/validate_staging_intake_observability_contract.py
+          tests/test_prometheus_runtime_routing_controls.py
       - name: Select fail-closed source or activation validation
         env:
           ACTIVATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python codestra/scripts/validate_staging_intake_observability_contract.py
       - run: python -m unittest discover -s tests -p 'test_collect_staging_intake_evidence*.py' -v
       - run: python -m unittest tests.test_staging_runtime_authority_launcher -v
+      - run: python -m unittest tests.test_prometheus_runtime_routing_controls -v
       - run: python -m unittest tests.test_staging_intake_observability_contract -v
       - name: Preserve activation boundary
         run: |
