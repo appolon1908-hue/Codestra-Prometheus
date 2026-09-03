@@ -1,0 +1,135 @@
+name: Probe Prometheus production public ingress
+
+on:
+  push:
+    branches:
+      - audit/production-public-probe-20260903
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prometheus-production-public-probe
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SOURCE_SHA: 660b976e01caa64667bc63953f32187df26d4e75
+  EXPECTED_SOURCE_TREE: ade8a3c224e6fc7679ba833c5a9370554636ea60
+  PUBLIC_HOSTNAME: prom.codestra.media
+  DOCUMENTED_IPV4: 37.27.128.39
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact certified source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 660b976e01caa64667bc63953f32187df26d4e75
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact source identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test "$(git show -s --format=%T HEAD)" = "$EXPECTED_SOURCE_TREE"
+
+      - name: Collect DNS, TCP, TLS and GET-only evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0755 evidence
+          exec > >(tee evidence/public-probe.txt) 2>&1
+          printf 'CAPTURED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'PUBLIC_HOSTNAME=%s\n' "$PUBLIC_HOSTNAME"
+          printf 'DOCUMENTED_IPV4=%s\n' "$DOCUMENTED_IPV4"
+          printf 'METHODS_USED=GET_ONLY\n'
+          printf 'SERVER_MODIFIED=NO\n'
+
+          printf '\n[DNS_SYSTEM]\n'
+          getent ahostsv4 "$PUBLIC_HOSTNAME" || true
+          printf '\n[DNS_1_1_1_1]\n'
+          dig +time=5 +tries=1 +short A "$PUBLIC_HOSTNAME" @1.1.1.1 || true
+          printf '\n[DNS_8_8_8_8]\n'
+          dig +time=5 +tries=1 +short A "$PUBLIC_HOSTNAME" @8.8.8.8 || true
+
+          printf '\n[TCP_CONNECTIVITY]\n'
+          python3 - <<'PY'
+          import os
+          import socket
+          import time
+
+          host = os.environ["DOCUMENTED_IPV4"]
+          for port in (22, 80, 443, 9090, 9093):
+              started = time.monotonic()
+              sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              sock.settimeout(5)
+              try:
+                  sock.connect((host, port))
+                  result = "OPEN"
+              except Exception as exc:
+                  result = f"CLOSED_OR_FILTERED error={type(exc).__name__}"
+              finally:
+                  sock.close()
+              elapsed = time.monotonic() - started
+              print(f"{host}:{port}={result} elapsed_seconds={elapsed:.3f}")
+          PY
+
+          printf '\n[TLS_CERTIFICATE]\n'
+          timeout 15 openssl s_client \
+            -connect "$DOCUMENTED_IPV4:443" \
+            -servername "$PUBLIC_HOSTNAME" \
+            -verify_return_error \
+            -brief </dev/null 2>&1 || true
+          timeout 15 openssl s_client \
+            -connect "$DOCUMENTED_IPV4:443" \
+            -servername "$PUBLIC_HOSTNAME" \
+            -showcerts </dev/null 2>/dev/null \
+            | openssl x509 -noout -subject -issuer -serial -dates -ext subjectAltName 2>/dev/null || true
+
+          probe() {
+            local label="$1" url="$2"
+            shift 2
+            local body headers metrics rc=0 body_sha body_bytes
+            body="$(mktemp)"
+            headers="$(mktemp)"
+            metrics="$(mktemp)"
+            curl --silent --show-error --location --max-redirs 0 \
+              --connect-timeout 5 --max-time 15 \
+              --request GET --output "$body" --dump-header "$headers" \
+              --write-out 'http_code=%{http_code}\nremote_ip=%{remote_ip}\nremote_port=%{remote_port}\ntime_total=%{time_total}\nssl_verify_result=%{ssl_verify_result}\ncontent_type=%{content_type}\nurl_effective=%{url_effective}\n' \
+              "$@" "$url" >"$metrics" || rc=$?
+            body_sha="$(sha256sum "$body" | awk '{print $1}')"
+            body_bytes="$(wc -c < "$body")"
+            printf '\n[HTTP_PROBE %s]\n' "$label"
+            printf 'curl_exit=%s\n' "$rc"
+            cat "$metrics"
+            printf 'body_bytes=%s\nbody_sha256=%s\n' "$body_bytes" "$body_sha"
+            awk 'BEGIN{IGNORECASE=1} /^(HTTP\/|location:|server:|content-type:|content-length:|www-authenticate:|strict-transport-security:|x-content-type-options:|x-frame-options:)/ {gsub(/\r$/,""); print}' "$headers"
+            rm -f "$body" "$headers" "$metrics"
+          }
+
+          for path in / /-/healthy /-/ready /api/v1/status/buildinfo /api/v1/targets /api/v1/rules; do
+            safe="$(printf '%s' "$path" | tr '/-' '__')"
+            probe "dns_https_${safe}" "https://${PUBLIC_HOSTNAME}${path}"
+            probe "forced_https_${safe}" "https://${PUBLIC_HOSTNAME}${path}" --resolve "${PUBLIC_HOSTNAME}:443:${DOCUMENTED_IPV4}"
+            probe "forced_https_insecure_${safe}" "https://${PUBLIC_HOSTNAME}${path}" --insecure --resolve "${PUBLIC_HOSTNAME}:443:${DOCUMENTED_IPV4}"
+            probe "direct_http_${safe}" "http://${DOCUMENTED_IPV4}${path}" --header "Host: ${PUBLIC_HOSTNAME}"
+          done
+
+          probe "direct_prometheus_9090_healthy" "http://${DOCUMENTED_IPV4}:9090/-/healthy"
+          probe "direct_alertmanager_9093_status" "http://${DOCUMENTED_IPV4}:9093/-/healthy"
+
+          printf '\nPUBLIC_PROBE_COMPLETE=YES\nSERVER_MODIFIED=NO\n'
+
+      - name: Upload immutable public probe evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prometheus-production-public-probe
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
