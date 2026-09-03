@@ -162,6 +162,21 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
         with self.assertRaises(collector.EvidenceError):
             wrapper.exact_scope_metadata(token("health.read", "wrong"), "metrics.read")
 
+    def test_authorization_metadata_is_normalized_and_fail_closed(self):
+        self.assertEqual(
+            wrapper.authorization_metadata(" chg-test12345 ", "SHA256:" + "A" * 64),
+            {
+                "change_id": "CHG-TEST12345",
+                "execution_reason_sha256": "sha256:" + "a" * 64,
+            },
+        )
+        for change_id, reason_sha256 in (
+            ("CHG-short", "sha256:" + "a" * 64),
+            ("CHG-TEST12345", "sha256:invalid"),
+        ):
+            with self.assertRaises(collector.EvidenceError):
+                wrapper.authorization_metadata(change_id, reason_sha256)
+
     def test_full_get_only_scope_isolated_collection(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -193,6 +208,10 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                     str(output),
                     "--checksum-output",
                     str(checksum),
+                    "--authorization-change-id",
+                    "chg-test12345",
+                    "--authorization-reason-sha256",
+                    "sha256:" + "a" * 64,
                     "--scrape-delay-seconds",
                     "0",
                 ]
@@ -204,6 +223,10 @@ class ScopeIsolationCollectorTests(unittest.TestCase):
                 evidence = json.loads(evidence_text)
                 self.assertEqual(evidence["schema_version"], "1.1")
                 self.assertEqual(evidence["overall_result"], "PASS")
+                self.assertEqual(evidence["authorization"], {
+                    "change_id": "CHG-TEST12345",
+                    "execution_reason_sha256": "sha256:" + "a" * 64,
+                })
                 self.assertEqual(
                     evidence["token_evidence"]["metrics"]["scopes"],
                     ["metrics.read"],

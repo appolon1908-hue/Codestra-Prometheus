@@ -63,6 +63,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           install -d -m 0700 "$EVIDENCE_ROOT"
+          reason="$(tr '\n\r\t' '   ' <<<"$EXECUTION_REASON" | xargs)"
+          reason_sha256="sha256:$(printf '%s' "$reason" | sha256sum | cut -d' ' -f1)"
           source_sha="$(jq -er '.middleware_source_authority.source_sha' integration/staging-activation-contract-v1.json)"
           image_digest="$(jq -er '.middleware_source_authority.immutable_image_digest' integration/staging-activation-contract-v1.json)"
           python3 codestra/scripts/collect_staging_intake_evidence_v2.py \
@@ -71,6 +73,8 @@ jobs:
             --health-token-file "$HEALTH_TOKEN_FILE" \
             --expected-source-sha "$source_sha" \
             --expected-image-digest "$image_digest" \
+            --authorization-change-id "${CHANGE_ID^^}" \
+            --authorization-reason-sha256 "$reason_sha256" \
             --output "$EVIDENCE_ROOT/evidence.json" \
             --checksum-output "$EVIDENCE_ROOT/evidence.sha256"
 
@@ -78,11 +82,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          reason="$(tr '\n\r\t' '   ' <<<"$EXECUTION_REASON" | xargs)"
+          reason_sha256="sha256:$(printf '%s' "$reason" | sha256sum | cut -d' ' -f1)"
           test "$(stat -c '%a' "$EVIDENCE_ROOT/evidence.json")" = 600
           test "$(stat -c '%a' "$EVIDENCE_ROOT/evidence.sha256")" = 600
           computed="sha256:$(sha256sum "$EVIDENCE_ROOT/evidence.json" | cut -d' ' -f1)"
           test "$(tr '[:upper:]' '[:lower:]' < "$EVIDENCE_ROOT/evidence.sha256")" = "$computed"
-          jq -e '.schema_version == "1.1" and .overall_result == "PASS" and .environment == "staging" and .target.private_network_only == true and .target.methods_used == ["GET"] and .target.business_writes_performed == false' "$EVIDENCE_ROOT/evidence.json" >/dev/null
+          jq -e --arg change_id "${CHANGE_ID^^}" --arg reason_sha256 "$reason_sha256" '.schema_version == "1.1" and .overall_result == "PASS" and .environment == "staging" and .authorization == {change_id: $change_id, execution_reason_sha256: $reason_sha256} and .target.private_network_only == true and .target.methods_used == ["GET"] and .target.business_writes_performed == false' "$EVIDENCE_ROOT/evidence.json" >/dev/null
 
       - name: Upload exact staging evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

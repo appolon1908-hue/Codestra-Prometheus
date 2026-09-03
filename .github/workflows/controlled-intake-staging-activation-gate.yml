@@ -249,6 +249,12 @@ jobs:
               raise SystemExit("runtime evidence is outside its 24-hour certification window")
           if evidence_document.get("environment") != "staging":
               raise SystemExit("runtime evidence is not from staging")
+          expected_authorization = {
+              "change_id": os.environ["CHANGE_ID"].strip().upper(),
+              "execution_reason_sha256": "sha256:" + hashlib.sha256(reason.encode("utf-8")).hexdigest(),
+          }
+          if evidence_document.get("authorization") != expected_authorization:
+              raise SystemExit("runtime evidence was collected under a different approval")
           target = evidence_document.get("target", {})
           if target.get("private_network_only") is not True or target.get("methods_used") != ["GET"] or target.get("business_writes_performed") is not False:
               raise SystemExit("runtime evidence target boundary is unsafe")

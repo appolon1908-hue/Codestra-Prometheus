@@ -17,6 +17,8 @@ class ProductionEvidenceAuthorityTests(unittest.TestCase):
             "/run/secrets/codestra/prometheus/middleware-staging-metrics-token",
             "/run/secrets/codestra/prometheus/middleware-staging-health-token",
             "collect_staging_intake_evidence_v2.py",
+            '--authorization-change-id "${CHANGE_ID^^}"',
+            '--authorization-reason-sha256 "$reason_sha256"',
             "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
             "METHODS_USED=GET_ONLY",
             "BUSINESS_WRITES_PERFORMED=NO",
@@ -36,6 +38,7 @@ class ProductionEvidenceAuthorityTests(unittest.TestCase):
             "gh run download",
             'computed = "sha256:" + hashlib.sha256(evidence_bytes).hexdigest()',
             'evidence_document.get("schema_version") != "1.1"',
+            'evidence_document.get("authorization") != expected_authorization',
             'sampled_metric_families',
             'generated_at < now - timedelta(hours=24)',
         ):
