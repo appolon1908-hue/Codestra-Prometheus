@@ -90,6 +90,26 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.validate(compose=changed)
 
+    def test_yaml_key_alias_host_port_publication_is_denied(self) -> None:
+        changed = (
+            "port-key: &port-key ports\n\n"
+            + self.compose.replace(
+                '    expose:\n      - "9187"',
+                '    expose:\n      - "9187"\n'
+                '    *port-key: ["127.0.0.1:9187:9187"]',
+            )
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
+    def test_duplicate_compose_keys_fail_closed(self) -> None:
+        changed = self.compose.replace(
+            '    expose:\n      - "9187"',
+            '    expose:\n      - "9187"\n    expose: ["9187"]',
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
     def test_alias_on_database_network_does_not_satisfy_authority(self) -> None:
         changed = self.compose.replace(
             "      observability:\n        aliases:\n          - postgres-exporter\n"
@@ -105,6 +125,21 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
             "    networks:\n      observability:\n        aliases:\n          - prometheus\n",
             "    networks:\n      database: {}\n",
             1,
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
+    def test_prometheus_decoy_outside_services_cannot_mask_drift(self) -> None:
+        changed = (
+            "x-prometheus-decoy:\n"
+            "  prometheus:\n"
+            "    networks:\n"
+            "      observability: {}\n\n"
+            + self.compose.replace(
+                "    networks:\n      observability:\n        aliases:\n          - prometheus\n",
+                "    networks:\n      database: {}\n",
+                1,
+            )
         )
         with self.assertRaises(SystemExit):
             self.validate(compose=changed)
@@ -126,6 +161,13 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
             "  postgres_exporter: appolon1908-hue/Codestra-Postgres-Exporter",
             "  postgres_exporter: appolon1908-hue/unapproved-exporter",
         )
+        with self.assertRaises(SystemExit):
+            self.validate(services=changed)
+
+    def test_catalog_authority_must_be_in_authorities_mapping(self) -> None:
+        authority = "  postgres_exporter: appolon1908-hue/Codestra-Postgres-Exporter"
+        changed = self.services.replace(authority + "\n", "", 1)
+        changed += "\nshadow_authorities:\n" + authority + "\n"
         with self.assertRaises(SystemExit):
             self.validate(services=changed)
 
