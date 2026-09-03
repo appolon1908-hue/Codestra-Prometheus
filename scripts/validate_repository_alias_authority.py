@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
+from urllib.parse import unquote
 
 import yaml
 from yaml.resolver import BaseResolver
@@ -22,11 +24,13 @@ DOCUMENTATION_PATH = "repository-name-migration.v1.json"
 POSTGRES_REPOSITORY_ID = 1350839865
 POSTGRES_REPOSITORY = "appolon1908-hue/Codestra-Postgres-Exporter"
 POSTGRES_PRIVATE_IDENTITY = "postgres-exporter:9187"
-FORBIDDEN_POSTGRES_HOSTNAME = "pgex.codestra.media"
+FORBIDDEN_POSTGRES_HOSTNAME = "pgex" + ".codestra.media"
 RESTAURANT_REPOSITORY_ID = 1221155447
 RESTAURANT_CURRENT_REPOSITORY = "appolon1908-hue/Frontend-Resturant-"
 RESTAURANT_TARGET_REPOSITORY = "appolon1908-hue/restaurant-frontend"
 OBSERVABILITY_NETWORK = "${CODESTRA_OBSERVABILITY_NETWORK:-codestra-observability}"
+DOT_EQUIVALENTS = str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."})
+RESOLVER_PATHS = {"/", "/etc", "/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf"}
 OPERATIONAL_PATHS = (
     "codestra/catalog/services.yml",
     "codestra/compose.yaml",
@@ -123,7 +127,38 @@ def require_list(value: object, source: str) -> list[Any]:
     return value
 
 
-def service_records(catalog: Mapping[str, Any], section: str, service: str) -> list[dict[str, Any]]:
+def normalize_hostname_text(value: str) -> str:
+    normalized = html.unescape(value).translate(DOT_EQUIVALENTS)
+    for _ in range(4):
+        decoded = html.unescape(unquote(normalized)).translate(DOT_EQUIVALENTS)
+        if decoded == normalized:
+            break
+        normalized = decoded
+    return normalized.lower()
+
+
+def contains_forbidden_hostname(value: str) -> bool:
+    return FORBIDDEN_POSTGRES_HOSTNAME in normalize_hostname_text(value)
+
+
+def iter_strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            if isinstance(key, str):
+                yield key
+            yield from iter_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from iter_strings(child)
+
+
+def service_records(
+    catalog: Mapping[str, Any],
+    section: str,
+    service: str,
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for value in require_list(catalog.get(section), f"services catalog {section}"):
         if not isinstance(value, dict):
@@ -135,6 +170,74 @@ def service_records(catalog: Mapping[str, Any], section: str, service: str) -> l
 
 def load_operational_sources() -> dict[str, str]:
     return {relative: read_regular(ROOT / relative) for relative in OPERATIONAL_PATHS}
+
+
+def mount_target(entry: object, collection: str) -> str | None:
+    if isinstance(entry, dict):
+        target = entry.get("target")
+        return target if isinstance(target, str) else None
+    if not isinstance(entry, str):
+        raise AuthorityError(f"Prometheus {collection} contains an invalid mount entry")
+    if collection == "volumes":
+        pieces = entry.split(":")
+        return pieces[1] if len(pieces) >= 2 else None
+    return None
+
+
+def validate_resolver_boundary(prometheus: Mapping[str, Any]) -> None:
+    for field in (
+        "extra_hosts",
+        "links",
+        "external_links",
+        "dns",
+        "dns_opt",
+        "dns_search",
+        "network_mode",
+        "extends",
+        "hostname",
+        "container_name",
+    ):
+        if field in prometheus:
+            raise AuthorityError(
+                f"Prometheus may not override private name resolution through {field}"
+            )
+
+    for collection in ("volumes", "configs", "secrets"):
+        entries = prometheus.get(collection, [])
+        if not isinstance(entries, list):
+            raise AuthorityError(f"Prometheus {collection} must be a list")
+        for entry in entries:
+            target = mount_target(entry, collection)
+            if target in RESOLVER_PATHS:
+                raise AuthorityError(
+                    f"Prometheus may not shadow resolver path through {collection}: {target}"
+                )
+
+    tmpfs = prometheus.get("tmpfs", [])
+    if isinstance(tmpfs, str):
+        tmpfs_entries = [tmpfs]
+    elif isinstance(tmpfs, list) and all(isinstance(item, str) for item in tmpfs):
+        tmpfs_entries = tmpfs
+    else:
+        raise AuthorityError("Prometheus tmpfs must be a string or list")
+    for entry in tmpfs_entries:
+        target = entry.split(":", 1)[0]
+        if target in RESOLVER_PATHS:
+            raise AuthorityError(f"Prometheus tmpfs may not shadow resolver path: {target}")
+
+
+def validate_operational_hostnames(operational_sources: Mapping[str, str]) -> None:
+    for source, text in operational_sources.items():
+        if source.endswith(".json"):
+            parsed = load_json_text(text, source)
+            if any(contains_forbidden_hostname(value) for value in iter_strings(parsed)):
+                raise AuthorityError(
+                    f"retired public PostgreSQL Exporter hostname found in {source}"
+                )
+        elif contains_forbidden_hostname(text):
+            raise AuthorityError(
+                f"retired public PostgreSQL Exporter hostname found in {source}"
+            )
 
 
 def validate_documents(
@@ -233,10 +336,8 @@ def validate_documents(
         raise AuthorityError("production PostgreSQL Exporter labels drifted")
 
     compose_services = require_mapping(compose.get("services"), "Compose services")
-    if "postgres-exporter" in compose_services:
-        raise AuthorityError("Prometheus repository may not own PostgreSQL Exporter runtime")
-    if "prometheus" not in compose_services:
-        raise AuthorityError("Prometheus Compose service is missing")
+    if set(compose_services) != {"prometheus"}:
+        raise AuthorityError("Prometheus Compose may own only the Prometheus runtime")
 
     networks = require_mapping(compose.get("networks"), "Compose networks")
     observability = require_mapping(networks.get("observability"), "observability network")
@@ -253,22 +354,8 @@ def validate_documents(
         joined = False
     if not joined:
         raise AuthorityError("Prometheus must join the external observability network")
-    for field in (
-        "extra_hosts",
-        "links",
-        "external_links",
-        "dns",
-        "dns_opt",
-        "dns_search",
-        "network_mode",
-        "extends",
-    ):
-        if field in prometheus:
-            raise AuthorityError(f"Prometheus may not override private name resolution through {field}")
-
-    for source, text in operational_sources.items():
-        if FORBIDDEN_POSTGRES_HOSTNAME.lower() in text.lower():
-            raise AuthorityError(f"retired public PostgreSQL Exporter hostname found in {source}")
+    validate_resolver_boundary(prometheus)
+    validate_operational_hostnames(operational_sources)
 
 
 def validate_repository() -> None:
