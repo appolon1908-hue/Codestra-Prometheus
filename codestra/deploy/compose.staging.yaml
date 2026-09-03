@@ -30,6 +30,9 @@ services:
       - ../prometheus/targets:/etc/prometheus/targets:ro
       - ../prometheus/rules/intake-recording-rules.yml:/etc/prometheus/rules-staging/intake-recording-rules.yml:ro
       - ../prometheus/rules/intake-alerts.yml:/etc/prometheus/rules-staging/intake-alerts.yml:ro
+      - ../prometheus/rules/recording-rules.yml:/etc/prometheus/rules-staging/recording-rules.yml:ro
+      - ../prometheus/rules/security-alerts.yml:/etc/prometheus/rules-staging/security-alerts.yml:ro
+      - ../prometheus/rules/application-alerts.yml:/etc/prometheus/rules-staging/application-alerts.yml:ro
       - prometheus_staging_data:/prometheus
     secrets:
       - source: middleware_staging_monitoring_client_secret
