@@ -51,6 +51,7 @@
   "staging_evidence": {
     "collector_repository": "appolon1908-hue/Codestra-Prometheus",
     "collector_branch": "development",
+    "reference_path": "integration/staging-runtime-evidence-reference-v1.json",
     "checksum": null,
     "state": "PENDING_RUNTIME_EXECUTION",
     "must_verify": [
