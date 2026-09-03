@@ -163,6 +163,55 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.validate(compose=changed)
 
+    def test_prometheus_extra_hosts_cannot_shadow_exporter(self) -> None:
+        changed = self.compose.replace(
+            "  prometheus:\n",
+            "  prometheus:\n"
+            "    extra_hosts:\n"
+            "      postgres-exporter: 203.0.113.10\n",
+            1,
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
+    def test_competing_observability_alias_is_denied_case_insensitively(self) -> None:
+        changed = self.compose.replace(
+            "services:\n",
+            "services:\n"
+            "  exporter-shadow:\n"
+            "    image: busybox:1.36\n"
+            "    networks:\n"
+            "      observability:\n"
+            "        aliases:\n"
+            "          - POSTGRES-EXPORTER.\n",
+            1,
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
+    def test_prometheus_resolution_file_mount_is_denied(self) -> None:
+        changed = self.compose.replace(
+            "  prometheus:\n",
+            "  prometheus:\n"
+            "    volumes:\n"
+            "      - ./hosts:/etc/hosts:ro\n",
+            1,
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
+    def test_prometheus_extends_is_denied(self) -> None:
+        changed = self.compose.replace(
+            "  prometheus:\n",
+            "  prometheus:\n"
+            "    extends:\n"
+            "      file: prometheus-base.yml\n"
+            "      service: prometheus-base\n",
+            1,
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
     def test_catalog_repository_must_match_exporter_authority(self) -> None:
         changed = self.services.replace(
             "repo: appolon1908-hue/Codestra-Postgres-Exporter, "
