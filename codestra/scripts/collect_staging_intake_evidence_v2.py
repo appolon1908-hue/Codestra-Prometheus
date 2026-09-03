@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -60,12 +61,47 @@ def parse_wrapper_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--health-token-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--checksum-output", type=Path, required=True)
+    parser.add_argument("--authorization-change-id", required=True)
+    parser.add_argument("--authorization-reason-sha256", required=True)
     args, _ = parser.parse_known_args(argv)
     return args
 
 
+def base_collector_argv(argv: list[str]) -> list[str]:
+    wrapper_only = {
+        "--authorization-change-id",
+        "--authorization-reason-sha256",
+    }
+    filtered: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in wrapper_only:
+            index += 2
+            continue
+        filtered.append(argv[index])
+        index += 1
+    return filtered
+
+
+def authorization_metadata(change_id: str, reason_sha256: str) -> dict[str, str]:
+    normalized_change_id = change_id.strip().upper()
+    normalized_reason_sha256 = reason_sha256.strip().lower()
+    if not re.fullmatch(r"CHG-[A-Z0-9][A-Z0-9._-]{7,}", normalized_change_id):
+        raise collector.EvidenceError("authorization change ID is invalid")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", normalized_reason_sha256):
+        raise collector.EvidenceError("authorization reason checksum is invalid")
+    return {
+        "change_id": normalized_change_id,
+        "execution_reason_sha256": normalized_reason_sha256,
+    }
+
+
 def main() -> int:
     args = parse_wrapper_args(sys.argv[1:])
+    authorization = authorization_metadata(
+        args.authorization_change_id,
+        args.authorization_reason_sha256,
+    )
     base_url, _ = collector.validate_base_url(args.base_url)
     metrics_token = collector.read_private_file(args.metrics_token_file)
     health_token = collector.read_private_file(args.health_token_file)
@@ -77,8 +113,13 @@ def main() -> int:
     isolation = scope_isolation_checks(base_url, metrics_token, health_token)
 
     captured = io.StringIO()
-    with contextlib.redirect_stdout(captured):
-        result = collector.main()
+    original_argv = sys.argv
+    try:
+        sys.argv = [original_argv[0], *base_collector_argv(original_argv[1:])]
+        with contextlib.redirect_stdout(captured):
+            result = collector.main()
+    finally:
+        sys.argv = original_argv
     if result != 0:
         raise collector.EvidenceError("base evidence collector did not pass")
 
@@ -86,6 +127,7 @@ def main() -> int:
     if evidence.get("overall_result") != "PASS":
         raise collector.EvidenceError("base evidence document did not pass")
     evidence["schema_version"] = "1.1"
+    evidence["authorization"] = authorization
     evidence["checks"].update(isolation)
     evidence["token_evidence"]["metrics"] = metrics_metadata
     evidence["token_evidence"]["health"] = health_metadata

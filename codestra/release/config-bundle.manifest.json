@@ -11,7 +11,7 @@
     "codestra/compose.yaml": "26ac144144e002aa10af9901f8727cceebb2ccd6b4c0f0c32bf9ff677bb13204",
     "codestra/deploy/compose.staging.yaml": "2352f32e53f6306342588520b8d6ed5d794e1f4f8f8477a46974e145dfedd968",
     "codestra/prometheus/prometheus-staging.yml": "d232aa01876fa0ccdd12c996ba79625cab7eb1c756ed3114efa349834471c5c6",
-    "codestra/prometheus/prometheus.yml": "8e594005b5f7b8cb6a98612f3fbac03cc1f9d13dd98d4a675fe2d99352f2b101",
+    "codestra/prometheus/prometheus.yml": "46b4da431bf76cb0ec3d758075bf3de8e928b707c290fa08947eefe2088ddfa5",
     "codestra/prometheus/rules/application-alerts.yml": "ca2752d82162729504799e25d670ac0f5951e7978832a18e5048e9b94ef09c6e",
     "codestra/prometheus/rules/infrastructure-alerts.yml": "2d4cb75ab962146f72aa516aaab99fdacb6baffbcf94c1eba50ace98ea3fc6dd",
     "codestra/prometheus/rules/intake-alerts.yml": "0626ca7d93b5a46be5b223ea8ceedfb7a12970f49e281f242df3f46676e939af",

@@ -37,8 +37,12 @@ def metrics_payload() -> bytes:
     rows: list[str] = []
     for family in sorted(collector.EXPECTED_METRIC_FAMILIES):
         rows.extend((f"# HELP {family} test", f"# TYPE {family} gauge"))
-    rows.append('intake_inbox_backlog{codestra_business="platform",application="integration",service="middleware-api",environment="staging"} 0')
-    rows.append(f'codestra_release_info{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"}} 1')
+        if family == "codestra_release_info":
+            rows.append(f'{family}{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"}} 1')
+        elif family.startswith(("lead_", "survey_", "intake_")):
+            rows.append(f'{family}{{codestra_business="platform",application="integration",service="middleware-api",environment="staging"}} 0')
+        else:
+            rows.append(f"{family} 0")
     return ("\n".join(rows) + "\n").encode()
 
 
@@ -105,6 +109,13 @@ class CollectorTests(unittest.TestCase):
     def test_metric_contract_and_privacy(self):
         result = collector.analyze_metrics(metrics_payload(), max_series=5000, max_family_series=500)
         self.assertEqual(result["missing_metric_families"], [])
+        self.assertEqual(set(result["sampled_metric_families"]), collector.EXPECTED_METRIC_FAMILIES)
+        declarations_only = b"\n".join(
+            f"# TYPE {family} gauge".encode()
+            for family in sorted(collector.EXPECTED_METRIC_FAMILIES)
+        ) + b"\ncodestra_release_info 1\n"
+        with self.assertRaises(collector.EvidenceError):
+            collector.analyze_metrics(declarations_only, max_series=5000, max_family_series=500)
         bad = metrics_payload() + b'intake_inbox_backlog{codestra_business="platform",application="integration",service="middleware-api",environment="staging",customer_id="123"} 1\n'
         with self.assertRaises(collector.EvidenceError):
             collector.analyze_metrics(bad, max_series=5000, max_family_series=500)

@@ -304,6 +304,7 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
     if len(payload) > 8 * 1024 * 1024:
         raise EvidenceError("metrics response exceeds 8 MiB")
     declared_families: set[str] = set()
+    sampled_families: set[str] = set()
     series_by_family: dict[str, int] = {}
     sample_count = 0
     intake_samples = 0
@@ -326,7 +327,7 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
         labels = parse_label_set(match.group("labels"))
         sample_count += 1
         series_by_family[family] = series_by_family.get(family, 0) + 1
-        declared_families.add(family)
+        sampled_families.add(family)
         unknown_labels = set(labels) - ALLOWED_LABEL_NAMES
         forbidden_labels = {label for label in labels if FORBIDDEN_LABEL_RE.fullmatch(label)}
         if unknown_labels or forbidden_labels:
@@ -347,7 +348,7 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
                 for key, value in expected.items():
                     if labels.get(key) != value:
                         raise EvidenceError(f"intake metric {family} has invalid {key}")
-    missing = EXPECTED_METRIC_FAMILIES - declared_families
+    missing = EXPECTED_METRIC_FAMILIES - sampled_families
     if missing:
         raise EvidenceError("required metric families are missing: " + ",".join(sorted(missing)))
     if sample_count <= 0 or sample_count > max_series:
@@ -361,7 +362,9 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
         "payload_sha256": sha256_bytes(payload),
         "payload_bytes": len(payload),
         "series_count": sample_count,
-        "family_count": len(declared_families),
+        "family_count": len(sampled_families),
+        "declared_family_count": len(declared_families),
+        "sampled_metric_families": sorted(sampled_families),
         "intake_sample_count": intake_samples,
         "maximum_family_series": max(series_by_family.values(), default=0),
         "required_metric_families": sorted(EXPECTED_METRIC_FAMILIES),
