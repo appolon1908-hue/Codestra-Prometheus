@@ -15,6 +15,9 @@ on:
       - "tests/test_staging_intake_observability_contract.py"
       - "tests/test_collect_staging_intake_evidence.py"
       - "tests/test_collect_staging_intake_evidence_v2.py"
+      - "tests/test_production_evidence_authority.py"
+      - ".github/workflows/collect-staging-intake-evidence.yml"
+      - ".github/workflows/controlled-intake-staging-activation-gate.yml"
       - ".github/workflows/stage6-intake-observability.yml"
   push:
     branches: [development]
@@ -31,6 +34,9 @@ on:
       - "tests/test_staging_intake_observability_contract.py"
       - "tests/test_collect_staging_intake_evidence.py"
       - "tests/test_collect_staging_intake_evidence_v2.py"
+      - "tests/test_production_evidence_authority.py"
+      - ".github/workflows/collect-staging-intake-evidence.yml"
+      - ".github/workflows/controlled-intake-staging-activation-gate.yml"
       - ".github/workflows/stage6-intake-observability.yml"
 
 permissions:
@@ -67,6 +73,7 @@ jobs:
           ACTIVATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python codestra/scripts/validate_staging_intake_observability_contract.py
       - run: python -m unittest discover -s tests -p 'test_collect_staging_intake_evidence*.py' -v
+      - run: python -m unittest tests.test_production_evidence_authority -v
       - run: python -m unittest tests.test_staging_intake_observability_contract -v
       - name: Preserve activation boundary
         run: |
