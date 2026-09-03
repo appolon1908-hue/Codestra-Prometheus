@@ -36,7 +36,7 @@ jobs:
       EXPECTED_BRANCH_HEAD: ${{ inputs.expected_branch_head }}
       EXECUTION_REASON: ${{ inputs.execution_reason }}
       CHANGE_ID: ${{ inputs.change_id }}
-      EVIDENCE_ROOT: ${{ runner.temp }}/codestra-staging-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+      EVIDENCE_BASENAME: codestra-staging-evidence-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -66,7 +66,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          install -d -m 0700 "$EVIDENCE_ROOT"
+          evidence_root="$RUNNER_TEMP/$EVIDENCE_BASENAME"
+          install -d -m 0700 "$evidence_root"
           reason_sha256="$(python3 - <<'PY'
           import hashlib
           import os
@@ -84,13 +85,14 @@ jobs:
             --expected-image-digest "$image_digest" \
             --authorization-change-id "${CHANGE_ID^^}" \
             --authorization-reason-sha256 "$reason_sha256" \
-            --output "$EVIDENCE_ROOT/evidence.json" \
-            --checksum-output "$EVIDENCE_ROOT/evidence.sha256"
+            --output "$evidence_root/evidence.json" \
+            --checksum-output "$evidence_root/evidence.sha256"
 
       - name: Validate sanitized evidence artifact
         shell: bash
         run: |
           set -Eeuo pipefail
+          evidence_root="$RUNNER_TEMP/$EVIDENCE_BASENAME"
           reason_sha256="$(python3 - <<'PY'
           import hashlib
           import os
@@ -98,19 +100,19 @@ jobs:
           print("sha256:" + hashlib.sha256(reason.encode("utf-8")).hexdigest())
           PY
           )"
-          test "$(stat -c '%a' "$EVIDENCE_ROOT/evidence.json")" = 600
-          test "$(stat -c '%a' "$EVIDENCE_ROOT/evidence.sha256")" = 600
-          computed="sha256:$(sha256sum "$EVIDENCE_ROOT/evidence.json" | cut -d' ' -f1)"
-          test "$(tr '[:upper:]' '[:lower:]' < "$EVIDENCE_ROOT/evidence.sha256")" = "$computed"
-          jq -e --arg change_id "${CHANGE_ID^^}" --arg reason_sha256 "$reason_sha256" '.schema_version == "1.1" and .overall_result == "PASS" and .environment == "staging" and .authorization == {change_id: $change_id, execution_reason_sha256: $reason_sha256} and .target.private_network_only == true and .target.methods_used == ["GET"] and .target.business_writes_performed == false' "$EVIDENCE_ROOT/evidence.json" >/dev/null
+          test "$(stat -c '%a' "$evidence_root/evidence.json")" = 600
+          test "$(stat -c '%a' "$evidence_root/evidence.sha256")" = 600
+          computed="sha256:$(sha256sum "$evidence_root/evidence.json" | cut -d' ' -f1)"
+          test "$(tr '[:upper:]' '[:lower:]' < "$evidence_root/evidence.sha256")" = "$computed"
+          jq -e --arg change_id "${CHANGE_ID^^}" --arg reason_sha256 "$reason_sha256" '.schema_version == "1.1" and .overall_result == "PASS" and .environment == "staging" and .authorization == {change_id: $change_id, execution_reason_sha256: $reason_sha256} and .target.private_network_only == true and .target.methods_used == ["GET"] and .target.business_writes_performed == false' "$evidence_root/evidence.json" >/dev/null
 
       - name: Upload exact staging evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: codestra-staging-intake-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ env.EVIDENCE_ROOT }}/evidence.json
-            ${{ env.EVIDENCE_ROOT }}/evidence.sha256
+            ${{ runner.temp }}/${{ env.EVIDENCE_BASENAME }}/evidence.json
+            ${{ runner.temp }}/${{ env.EVIDENCE_BASENAME }}/evidence.sha256
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -119,9 +121,10 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [[ -d "$EVIDENCE_ROOT" ]]; then
-            find "$EVIDENCE_ROOT" -type f -exec chmod 0600 {} \; -exec unlink {} \;
-            rmdir "$EVIDENCE_ROOT"
+          evidence_root="$RUNNER_TEMP/$EVIDENCE_BASENAME"
+          if [[ -d "$evidence_root" ]]; then
+            find "$evidence_root" -type f -exec chmod 0600 {} \; -exec unlink {} \;
+            rmdir "$evidence_root"
           fi
 
       - name: Preserve source-only boundary
