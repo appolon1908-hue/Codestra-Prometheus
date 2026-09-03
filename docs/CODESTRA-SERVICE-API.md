@@ -6,10 +6,10 @@ This repository owns the **metrics-slo-alert-evaluation-authority** for the Code
 
 Prometheus keeps its native API and protocol. The shared Codestra control plane in `appolon1908-hue/Codestra-Telemetry` performs only sanitized health, readiness, contract, topology, and immutable-release read-back. It never proxies native query bodies, ingestion, alert delivery, dashboard mutations, secret values, or credential issuance.
 
-Canonical hostname: `prom.codestra.media`
-Native exposure: `internal_private`
-Deployment class: `central`
-Contract: `codestra/api/service-contract.v1.json`
+- Canonical hostname: `prom.codestra.media`
+- Native exposure: `internal_private`
+- Deployment class: `central`
+- Contract: `codestra/api/service-contract.v1.json`
 
 ## Native operations
 
@@ -46,7 +46,6 @@ Business identity is deployment-controlled. Caller-supplied business identity, c
 ## Release and runtime boundary
 
 The control plane reads source revision and image digest only from deployment environment variables. A valid release requires a 40-character Git SHA and `sha256:<64 lowercase hex>` image digest. This source change does not deploy the service, activate ingestion/scrapes/probes/alerts, issue credentials, or enable any business, communications, financial, or trading mutation.
-
 
 ## Contract authority handoff
 
