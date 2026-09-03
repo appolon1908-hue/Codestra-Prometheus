@@ -15,6 +15,14 @@ EXPECTED_DIGEST = "sha256:695fa3ce3f50ba4d0ae0784976b946a0a683ca731155e4bd3bd9e9
 STAGING_TOKEN_URL = "https://auth-staging.codestra.co/realms/codestra/protocol/openid-connect/token"
 PRODUCTION_TOKEN_URL = "https://auth.codestra.co/realms/codestra/protocol/openid-connect/token"
 TARGETS_PATH = CODESTRA / "prometheus/targets/staging.json"
+CONTRACT_PATH = REPO / "integration/staging-activation-contract-v1.json"
+EXPECTED_STAGING_RULE_FILES = {
+    "/etc/prometheus/rules-staging/intake-recording-rules.yml",
+    "/etc/prometheus/rules-staging/intake-alerts.yml",
+    "/etc/prometheus/rules-staging/recording-rules.yml",
+    "/etc/prometheus/rules-staging/security-alerts.yml",
+    "/etc/prometheus/rules-staging/application-alerts.yml",
+}
 
 
 def validate_reviewed_git_evidence(contract: dict[str, object]) -> None:
@@ -34,16 +42,65 @@ def validate_reviewed_git_evidence(contract: dict[str, object]) -> None:
     assert evidence["scope"] == "SOURCE_ONLY_ACTIVATION_ELIGIBILITY_NO_RUNTIME_EFFECT"
     expected_checksum = evidence["authority_payload_sha256"]
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", expected_checksum)
-    payload = {key: value for key, value in evidence.items() if key != "authority_payload_sha256"}
+    payload = {
+        key: value
+        for key, value in evidence.items()
+        if key != "authority_payload_sha256"
+    }
     actual_checksum = "sha256:" + hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     assert actual_checksum == expected_checksum
 
 
+def validate_staging_evidence(
+    evidence: dict[str, object], expected_activation: str
+) -> None:
+    assert evidence["collector_repository"] == "appolon1908-hue/Codestra-Prometheus"
+    assert evidence["collector_branch"] == "development"
+    assert {"signed_release_manifest", "sigstore_identity"}.issubset(
+        set(evidence["must_verify"])
+    )
+    checksum = evidence["checksum"]
+    state = evidence["state"]
+    if expected_activation == "active":
+        assert state == "CERTIFIED_RUNTIME_EVIDENCE"
+        assert isinstance(checksum, str)
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", checksum)
+        return
+    if checksum is None:
+        assert state == "PENDING_RUNTIME_EXECUTION"
+    else:
+        assert state == "CERTIFIED_RUNTIME_EVIDENCE"
+        assert isinstance(checksum, str)
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", checksum)
+
+
+def validate_production_target_isolation() -> None:
+    primary = yaml.safe_load(
+        (CODESTRA / "prometheus/prometheus.yml").read_text(encoding="utf-8")
+    )
+    jobs = {item["job_name"]: item for item in primary["scrape_configs"]}
+    target_job = jobs["codestra-targets"]
+    relabel = {
+        tuple(item.get("source_labels", [])): (
+            item.get("regex"),
+            item.get("action"),
+        )
+        for item in target_job["relabel_configs"]
+    }
+    assert relabel[("activation",)] == ("active", "keep")
+    assert relabel[("environment",)] == ("production", "keep")
+
+
 def validate(expected_activation: str = "pending") -> None:
     assert expected_activation in {"pending", "active"}
-    config = yaml.safe_load((CODESTRA / "prometheus/prometheus-staging.yml").read_text())
+    config = yaml.safe_load(
+        (CODESTRA / "prometheus/prometheus-staging.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert set(config["rule_files"]) == EXPECTED_STAGING_RULE_FILES
     jobs = {item["job_name"]: item for item in config["scrape_configs"]}
     assert set(jobs) == {"prometheus-staging", "middleware-intake-staging"}
     job = jobs["middleware-intake-staging"]
@@ -57,10 +114,16 @@ def validate(expected_activation: str = "pending") -> None:
     }
     assert PRODUCTION_TOKEN_URL not in json.dumps(config, sort_keys=True)
     assert job["file_sd_configs"] == [
-        {"files": ["/etc/prometheus/targets/staging.json"], "refresh_interval": "30s"}
+        {
+            "files": ["/etc/prometheus/targets/staging.json"],
+            "refresh_interval": "30s",
+        }
     ]
     assert {
-        tuple(item.get("source_labels", [])): (item.get("regex"), item.get("action"))
+        tuple(item.get("source_labels", [])): (
+            item.get("regex"),
+            item.get("action"),
+        )
         for item in job["relabel_configs"]
     } == {
         ("activation",): ("active", "keep"),
@@ -68,7 +131,7 @@ def validate(expected_activation: str = "pending") -> None:
         ("tenant_scope",): ("aggregate", "keep"),
     }
 
-    targets = json.loads(TARGETS_PATH.read_text())
+    targets = json.loads(TARGETS_PATH.read_text(encoding="utf-8"))
     assert len(targets) == 1
     assert targets[0]["targets"] == ["middleware-intake-staging:8080"]
     labels = targets[0]["labels"]
@@ -78,13 +141,11 @@ def validate(expected_activation: str = "pending") -> None:
     assert labels["service"] == "middleware-intake"
     assert labels["release_id"] == "f6748a58f8d2-695fa3ce3f50"
 
-    contract = json.loads(
-        (REPO / "integration/staging-activation-contract-v1.json").read_text()
-    )
+    contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
     authority = contract["middleware_source_authority"]
     assert authority["source_sha"] == EXPECTED_SOURCE
     assert authority["immutable_image_digest"] == EXPECTED_DIGEST
-    assert contract["staging_evidence"]["checksum"] is None
+    validate_staging_evidence(contract["staging_evidence"], expected_activation)
     assert (
         contract["activation_policy"]["prometheus_target_current_state"]
         == "pending"
@@ -95,11 +156,14 @@ def validate(expected_activation: str = "pending") -> None:
     )
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", EXPECTED_DIGEST)
     validate_reviewed_git_evidence(contract)
+    validate_production_target_isolation()
 
-    collector = (CODESTRA / "scripts/collect_staging_intake_evidence.py").read_text()
+    collector = (
+        CODESTRA / "scripts/collect_staging_intake_evidence.py"
+    ).read_text(encoding="utf-8")
     wrapper = (
         CODESTRA / "scripts/collect_staging_intake_evidence_v2.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     for required in (
         "unauthenticated /metrics",
         "wrong-token /metrics",
@@ -120,9 +184,14 @@ def validate(expected_activation: str = "pending") -> None:
     ):
         assert required in wrapper, required
 
-    workflow = (REPO / ".github/workflows/stage6-intake-observability.yml").read_text()
+    workflow = (
+        REPO / ".github/workflows/stage6-intake-observability.yml"
+    ).read_text(encoding="utf-8")
     assert "collect_staging_intake_evidence_v2.py" in workflow
     assert "test_collect_staging_intake_evidence*.py" in workflow
+    assert (
+        "github.event.pull_request.base.sha || github.event.before" in workflow
+    )
 
 
 def main() -> None:
