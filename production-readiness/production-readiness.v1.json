@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "repository_id": 1350767800,
+  "repository": "appolon1908-hue/Codestra-Prometheus",
+  "component": "prometheus",
+  "authority": "CODESTRA_PROMETHEUS_PRODUCTION_SOURCE",
+  "target_server": "37.27.128.39",
+  "public_hostname": null,
+  "source_state": "PRODUCTION_SOURCE_CANDIDATE",
+  "runtime_state": "NOT_CERTIFIED_NOT_DEPLOYED_BY_THIS_CHANGE",
+  "private_service_identity": "prometheus:9090",
+  "private_postgresql_exporter": {
+    "service_identity": "postgres-exporter:9187",
+    "public_hostname": null,
+    "public_route_allowed": false,
+    "host_public_port_allowed": false
+  },
+  "release_policy": {
+    "protected_source_sha_required": true,
+    "immutable_image_digests_required": true,
+    "floating_image_tags_forbidden": true,
+    "configuration_checksum_required": true,
+    "promtool_validation_required": true,
+    "sensitive_label_validation_required": true,
+    "isolated_staging_required": true,
+    "snapshot_or_supported_backup_required": true,
+    "restore_rehearsal_required": true,
+    "rollback_configuration_required": true,
+    "post_deploy_runtime_readback_required": true,
+    "production_environment_approval_required": true
+  },
+  "runtime_safety": {
+    "public_prometheus_ui_allowed": false,
+    "public_alertmanager_ui_allowed": false,
+    "public_postgresql_exporter_allowed": false,
+    "admin_api_activation_authorized_by_source_merge": false,
+    "alert_delivery_activation_authorized_by_source_merge": false,
+    "remote_write_activation_authorized_by_source_merge": false,
+    "workload_restart_authorized_by_source_merge": false
+  },
+  "required_source_files": [
+    "codestra/catalog/repository-name-aliases.v1.json",
+    "codestra/catalog/services.yml",
+    "codestra/compose.yaml",
+    "codestra/prometheus/targets/production.json",
+    "codestra/scripts/validate_repository_name_authority.py",
+    "codestra/tests/test_repository_name_authority.py",
+    ".github/workflows/codestra-observability.yml",
+    ".github/workflows/repository-name-authority.yml"
+  ],
+  "required_source_checks": [
+    "repository alias authority",
+    "private PostgreSQL Exporter identity and DNS ownership",
+    "Compose port and resolver-shadowing denial",
+    "Prometheus configuration validation",
+    "Prometheus rule validation",
+    "target and label-cardinality validation",
+    "secret-shaped material scan",
+    "immutable image and rollback policy validation",
+    "production readiness manifest validation"
+  ],
+  "production_exit_criteria": [
+    "protected merge commit recorded",
+    "all runtime image digests resolved and verified",
+    "configuration and rules checksum retained",
+    "candidate certified in isolated staging",
+    "all required targets healthy or explicitly approved degraded",
+    "supported snapshot or backup and restore rehearsal pass",
+    "rollback configuration and images are available",
+    "target server and private network read back",
+    "production environment approval recorded",
+    "running digests and configuration checksum read back after deployment"
+  ]
+}
