@@ -24,9 +24,26 @@ class ProductionEvidenceAuthorityTests(unittest.TestCase):
             "METHODS_USED=GET_ONLY",
             "BUSINESS_WRITES_PERFORMED=NO",
             "PRODUCTION_AUTHORIZED=NO",
+            "EVIDENCE_BASENAME:",
+            "$RUNNER_TEMP/$EVIDENCE_BASENAME",
         ):
             self.assertIn(required, workflow)
         self.assertNotIn("${{ secrets.", workflow)
+        self.assertNotIn("EVIDENCE_ROOT: ${{ runner.temp }}", workflow)
+
+        actionlint_config = (ROOT / ".github/actionlint.yaml").read_text()
+        self.assertIn("codestra-staging-observability", actionlint_config)
+        actionlint_image = (
+            "rhysd/actionlint@sha256:"
+            "1d74bfc9fd1963af8f89a7c22afaaafd42f49aad711a09951d02cb996398f61d"
+        )
+        for validation_workflow in (
+            ".github/workflows/validate-repository-readiness.yml",
+            ".github/workflows/validate-repository-readiness-protected.yml",
+        ):
+            text = (ROOT / validation_workflow).read_text()
+            self.assertIn(actionlint_image, text)
+            self.assertIn("collect-staging-intake-evidence.yml", text)
 
     def test_activation_consumes_exact_successful_artifact(self) -> None:
         workflow = (ROOT / ".github/workflows/controlled-intake-staging-activation-gate.yml").read_text()
