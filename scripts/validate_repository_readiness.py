@@ -10,6 +10,9 @@ from pathlib import Path
 
 import yaml
 
+from validate_repository_alias_authority import (
+    validate_repository as validate_repository_alias_authority,
+)
 from validate_source_authority import validate_repository as validate_source_authority
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,17 +27,22 @@ REQUIRED = (
     ".github/workflows/upstream-source-sync.yml",
     ".github/workflows/codestra-observability.yml",
     ".github/workflows/validate-codestra-corporate-runtime-v1.yml",
+    ".github/workflows/validate-repository-alias-authority.yml",
     "CODESTRA_UPSTREAM.json",
     "CODESTRA_UPSTREAM_LOCK.json",
     "docs/BACKUP_RESTORE_ROLLBACK.md",
+    "docs/REPOSITORY_NAME_AUTHORITY.md",
     "docs/UPGRADE.md",
     "docs/UPSTREAM_SOURCE_AUTHORITY.md",
     ".gitleaks.toml",
+    "codestra/catalog/repository-name-aliases.v1.json",
     "codestra/release/runtime-image.lock.json",
     "codestra/release/config-bundle.manifest.json",
     "scripts/build_config_bundle.py",
     "scripts/validate_locked_runtime.sh",
+    "scripts/validate_repository_alias_authority.py",
     "scripts/validate_source_authority.py",
+    "tests/test_repository_alias_authority.py",
     ".github/workflows/release-config-bundle.yml",
     "requirements-validation.txt",
 )
@@ -57,6 +65,7 @@ def main() -> None:
         fail(f"missing readiness files: {missing}")
 
     validate_source_authority()
+    validate_repository_alias_authority()
 
     lock = load("codestra/release/runtime-image.lock.json")
     if (
