@@ -40,7 +40,10 @@ jobs:
           git fetch --no-tags origin "$BASE_REF" "$SOURCE_SHA"
           test "$(git rev-parse "origin/$BASE_REF")" = "$BASE_SHA"
           test "$(git show -s --format=%T "$SOURCE_SHA")" = "$SOURCE_TREE"
-          test "$(git show -s --format=%G? "$SOURCE_SHA")" = G
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" \
+            | jq -e --arg tree "$SOURCE_TREE" \
+                '.commit.tree.sha == $tree and .commit.verification.verified == true and .commit.verification.reason == "valid"' \
+              >/dev/null
 
           if git ls-remote --exit-code --heads origin "$PROMOTION_BRANCH" >/dev/null 2>&1; then
             printf 'PROMOTION_BRANCH_ALREADY_EXISTS=YES\n'
@@ -58,7 +61,9 @@ jobs:
           test "$(git write-tree)" = "$SOURCE_TREE"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit --no-gpg-sign -m "promote: publish exact signed staging tree to main" -m "Materialize signed staging source $SOURCE_SHA and exact tree $SOURCE_TREE on canonical main $BASE_SHA. Source promotion only; no runtime deployment or external effect."
+          git commit --no-gpg-sign \
+            -m "promote: publish exact signed staging tree to main" \
+            -m "Materialize signed staging source $SOURCE_SHA and exact tree $SOURCE_TREE on canonical main $BASE_SHA. Source promotion only; no runtime deployment or external effect."
           promotion_head="$(git rev-parse HEAD)"
           test "$(git show -s --format=%T HEAD)" = "$SOURCE_TREE"
           test "$(git show -s --format=%P HEAD)" = "$BASE_SHA"
@@ -71,7 +76,6 @@ jobs:
           printf 'PROMOTION_COMMIT_CREATED=PASS\n'
 
       - name: Open bot-authored exact-tree pull request
-        id: open
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -84,17 +88,13 @@ jobs:
           fi
           test "$count" = 0
 
-          body="$(cat <<EOF
-Publishes the exact signed staging tree to canonical \`main\` from a GitHub Actions-authored promotion commit.
-
-- base: \`main@$BASE_SHA\`
-- signed staging source: \`$SOURCE_SHA\`
-- exact tree: \`$SOURCE_TREE\`
-- promotion head: \`$PROMOTION_HEAD\`
-
-The branch was created by \`github-actions[bot]\` only after verifying the signed staging commit, exact tree, and one-commit ancestry. The repository owner must independently approve this fixed head. Source promotion only; no runtime deployment, reload, target activation, networking, secrets, or external effects.
-EOF
-)"
+          printf -v body '%s\n\n%s\n%s\n%s\n%s\n\n%s\n' \
+            'Publishes the exact signed staging tree to canonical `main` from a GitHub Actions-authored promotion commit.' \
+            "- base: \`main@$BASE_SHA\`" \
+            "- signed staging source: \`$SOURCE_SHA\`" \
+            "- exact tree: \`$SOURCE_TREE\`" \
+            "- promotion head: \`$PROMOTION_HEAD\`" \
+            'The branch was created by `github-actions[bot]` only after verifying the signed staging commit, exact tree, and one-commit ancestry. The repository owner must independently approve this fixed head. Source promotion only; no runtime deployment, reload, target activation, networking, secrets, or external effects.'
 
           response_file="$(mktemp)"
           error_file="$(mktemp)"
@@ -110,7 +110,7 @@ EOF
           if [[ "$rc" -ne 0 ]]; then
             printf 'GITHUB_PR_CREATE_FAILED=YES\n' >&2
             sed -E 's/(token|authorization|secret)[^[:space:]]*/[REDACTED]/Ig' "$error_file" >&2
-            cat "$response_file" | jq -c '{message,errors,documentation_url,status}' >&2 || true
+            jq -c '{message,errors,documentation_url,status}' "$response_file" >&2 || true
             exit "$rc"
           fi
           jq -r '"PULL_REQUEST_NUMBER=\(.number)\nPULL_REQUEST_URL=\(.html_url)"' "$response_file" | tee -a "$GITHUB_ENV"
