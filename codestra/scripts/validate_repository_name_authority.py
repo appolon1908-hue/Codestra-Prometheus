@@ -66,11 +66,29 @@ UniqueKeyLoader.add_constructor(
 )
 
 
-def load_json(path: Path) -> object:
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Build one JSON object while rejecting duplicate security-sensitive keys."""
+
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def load_json_text(text: str, source: str) -> object:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        fail(f"invalid JSON {path.relative_to(ROOT)}: {exc}")
+        return json.loads(text, object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        fail(f"invalid JSON in {source}: {exc}")
+
+
+def load_json(path: Path) -> object:
+    return load_json_text(
+        path.read_text(encoding="utf-8"),
+        str(path.relative_to(ROOT)),
+    )
 
 
 def load_yaml_text(text: str, source: str) -> object:
@@ -203,6 +221,11 @@ def validate_postgres_operational_identity(
         fail("services catalog PostgreSQL Exporter authority drifted")
 
     exporter_service = compose_service_record(compose_document, "postgres-exporter")
+    if "extends" in exporter_service:
+        fail(
+            "PostgreSQL Exporter may not use Compose extends because inherited "
+            "host-port publication cannot be accepted"
+        )
     if "ports" in exporter_service:
         fail("PostgreSQL Exporter must not publish a host port")
     expose = exporter_service.get("expose")
