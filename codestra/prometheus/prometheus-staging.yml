@@ -11,7 +11,18 @@ global:
     prometheus_cluster: codestra-staging
 
 rule_files:
-  - /etc/prometheus/rules/*.yml
+  - /etc/prometheus/rules-staging/intake-recording-rules.yml
+  - /etc/prometheus/rules-staging/intake-alerts.yml
+
+alerting:
+  alert_relabel_configs:
+    - action: labeldrop
+      regex: prometheus_replica
+  alertmanagers:
+    - scheme: http
+      timeout: 10s
+      static_configs:
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   - job_name: prometheus-staging
@@ -45,7 +56,9 @@ scrape_configs:
     oauth2:
       client_id: monitoring-readonly
       client_secret_file: /run/secrets/middleware-staging-monitoring-client-secret
-      token_url: https://auth.codestra.co/realms/codestra/protocol/openid-connect/token
+      scopes:
+        - metrics.read
+      token_url: https://auth-staging.codestra.co/realms/codestra/protocol/openid-connect/token
     file_sd_configs:
       - files: ["/etc/prometheus/targets/staging.json"]
         refresh_interval: 30s

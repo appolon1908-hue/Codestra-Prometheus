@@ -77,6 +77,14 @@ EXPECTED_EXTERNAL_EFFECT_KEYS = {
     "UNRESTRICTED_CRAWLING",
 }
 
+EXPECTED_UMBRELLA_CONTROL_KEYS = {
+    "LIVE_ADVERTISING_ENABLED",
+    "EXTERNAL_DELIVERY_ENABLED",
+    "SOCIAL_PUBLISHING_ENABLED",
+    "EXTERNAL_MODEL_CALLS_ENABLED",
+    "N8N_EXTERNAL_PROVIDER_WRITES",
+}
+
 EXPECTED_RUNTIME_SAFETY_KEYS = {
     "schema_version",
     "service",
@@ -86,6 +94,7 @@ EXPECTED_RUNTIME_SAFETY_KEYS = {
     "persistence",
     "dispatch",
     "external_effects",
+    "umbrella_controls",
     "production_dialing",
     "production_activation_configured",
     "provider_effects_disabled",
@@ -295,6 +304,7 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
     if len(payload) > 8 * 1024 * 1024:
         raise EvidenceError("metrics response exceeds 8 MiB")
     declared_families: set[str] = set()
+    sampled_families: set[str] = set()
     series_by_family: dict[str, int] = {}
     sample_count = 0
     intake_samples = 0
@@ -317,7 +327,7 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
         labels = parse_label_set(match.group("labels"))
         sample_count += 1
         series_by_family[family] = series_by_family.get(family, 0) + 1
-        declared_families.add(family)
+        sampled_families.add(family)
         unknown_labels = set(labels) - ALLOWED_LABEL_NAMES
         forbidden_labels = {label for label in labels if FORBIDDEN_LABEL_RE.fullmatch(label)}
         if unknown_labels or forbidden_labels:
@@ -338,7 +348,7 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
                 for key, value in expected.items():
                     if labels.get(key) != value:
                         raise EvidenceError(f"intake metric {family} has invalid {key}")
-    missing = EXPECTED_METRIC_FAMILIES - declared_families
+    missing = EXPECTED_METRIC_FAMILIES - sampled_families
     if missing:
         raise EvidenceError("required metric families are missing: " + ",".join(sorted(missing)))
     if sample_count <= 0 or sample_count > max_series:
@@ -352,7 +362,9 @@ def analyze_metrics(payload: bytes, *, max_series: int, max_family_series: int) 
         "payload_sha256": sha256_bytes(payload),
         "payload_bytes": len(payload),
         "series_count": sample_count,
-        "family_count": len(declared_families),
+        "family_count": len(sampled_families),
+        "declared_family_count": len(declared_families),
+        "sampled_metric_families": sorted(sampled_families),
         "intake_sample_count": intake_samples,
         "maximum_family_series": max(series_by_family.values(), default=0),
         "required_metric_families": sorted(EXPECTED_METRIC_FAMILIES),
@@ -368,7 +380,7 @@ def validate_runtime_safety(payload: bytes, expected_source: str, expected_diges
         raise EvidenceError("runtime-safety response is not JSON") from exc
     if not isinstance(data, dict) or set(data) != EXPECTED_RUNTIME_SAFETY_KEYS:
         raise EvidenceError("runtime-safety response contains missing or unexpected fields")
-    if data["schema_version"] != "1.0" or data["service"] != "middleware-api":
+    if data["schema_version"] != "1.1" or data["service"] != "middleware-api":
         raise EvidenceError("runtime-safety identity is invalid")
     if data["environment"] != "staging":
         raise EvidenceError("runtime environment is not staging")
@@ -399,6 +411,14 @@ def validate_runtime_safety(payload: bytes, expected_source: str, expected_diges
         raise EvidenceError("external-effects evidence is empty or incomplete")
     if any(value is not False for value in effects.values()):
         raise EvidenceError("one or more external effects are enabled")
+    umbrella_controls = data["umbrella_controls"]
+    if (
+        not isinstance(umbrella_controls, dict)
+        or set(umbrella_controls) != EXPECTED_UMBRELLA_CONTROL_KEYS
+    ):
+        raise EvidenceError("umbrella-control evidence is empty or incomplete")
+    if any(value is not False for value in umbrella_controls.values()):
+        raise EvidenceError("one or more umbrella controls are enabled")
     if data["production_dialing"] != "DISABLED":
         raise EvidenceError("production dialing is not disabled")
     if data["production_activation_configured"] is not False:
@@ -421,6 +441,9 @@ def validate_runtime_safety(payload: bytes, expected_source: str, expected_diges
         "persistence": {"in_memory": False},
         "dispatch": {"outbox_enabled": False, "nats_mode": "disabled", "temporal_worker_mode": "disabled"},
         "external_effects": {name: False for name in sorted(EXPECTED_EXTERNAL_EFFECT_KEYS)},
+        "umbrella_controls": {
+            name: False for name in sorted(EXPECTED_UMBRELLA_CONTROL_KEYS)
+        },
         "production_dialing": "DISABLED",
         "production_activation_configured": False,
         "provider_effects_disabled": True,
