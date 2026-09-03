@@ -73,6 +73,15 @@ class SourceAuthorityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "vendored source used"):
             self.validate(workflows=workflows)
 
+    def test_stage6_requires_bounded_tmpfs(self) -> None:
+        workflows = dict(self.workflows)
+        workflows["corporate"] = workflows["corporate"].replace(
+            authority.EXPECTED_STAGE6_TMPFS,
+            "--tmpfs /tmp:rw,size=1g",
+        )
+        with self.assertRaisesRegex(ValueError, "bounded writable test storage"):
+            self.validate(workflows=workflows)
+
     def test_source_workflow_cannot_write(self) -> None:
         workflows = dict(self.workflows)
         workflows["source"] = workflows["source"].replace(
