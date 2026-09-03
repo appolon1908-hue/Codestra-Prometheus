@@ -42,6 +42,13 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
     def test_current_operational_identity_passes(self) -> None:
         self.validate()
 
+    def test_duplicate_json_authority_keys_fail_closed(self) -> None:
+        with self.assertRaises(SystemExit):
+            AUTHORITY.load_json_text(
+                '{"public_hostname":"public.example","public_hostname":null}',
+                "synthetic-authority.json",
+            )
+
     def test_public_target_is_denied(self) -> None:
         changed = json.loads(json.dumps(self.targets))
         postgres = next(
@@ -98,6 +105,18 @@ class RepositoryNameAuthorityTests(unittest.TestCase):
                 '    expose:\n      - "9187"\n'
                 '    *port-key: ["127.0.0.1:9187:9187"]',
             )
+        )
+        with self.assertRaises(SystemExit):
+            self.validate(compose=changed)
+
+    def test_compose_extends_is_denied(self) -> None:
+        changed = self.compose.replace(
+            "  postgres-exporter:\n",
+            "  postgres-exporter:\n"
+            "    extends:\n"
+            "      file: exporter-base.yml\n"
+            "      service: postgres-exporter-base\n",
+            1,
         )
         with self.assertRaises(SystemExit):
             self.validate(compose=changed)
