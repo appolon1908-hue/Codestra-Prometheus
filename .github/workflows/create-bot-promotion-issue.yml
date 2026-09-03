@@ -1,0 +1,89 @@
+name: Create bot-authored exact promotion issue
+
+on:
+  push:
+    branches:
+      - automation/create-bot-main-promotion-20260903
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: create-prometheus-bot-promotion-issue
+  cancel-in-progress: false
+
+env:
+  BASE_SHA: 12b79875cf01033d1a5bd29462fc70bed0e4bbfb
+  SOURCE_SHA: 660b976e01caa64667bc63953f32187df26d4e75
+  SOURCE_TREE: ade8a3c224e6fc7679ba833c5a9370554636ea60
+  PROMOTION_BRANCH: bot/promote-exact-staging-tree-main-20260903
+  PROMOTION_HEAD: 8960b0fdb2f436a5753105eeb0d9955d481abf70
+  ISSUE_TITLE: BOT_PROMOTION_REQUEST exact signed Prometheus staging tree to main
+
+jobs:
+  create:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact bot-authored promotion commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 8960b0fdb2f436a5753105eeb0d9955d481abf70
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify bot authorship and immutable authority
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$PROMOTION_HEAD"
+          test "$(git show -s --format=%T HEAD)" = "$SOURCE_TREE"
+          test "$(git show -s --format=%P HEAD)" = "$BASE_SHA"
+          test "$(git show -s --format=%an HEAD)" = 'github-actions[bot]'
+          test "$(git show -s --format=%ae HEAD)" = '41898282+github-actions[bot]@users.noreply.github.com'
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" \
+            | jq -e --arg tree "$SOURCE_TREE" \
+                '.commit.tree.sha == $tree and .commit.verification.verified == true and .commit.verification.reason == "valid"' \
+              >/dev/null
+          printf 'BOT_PROMOTION_AUTHORITY=PASS\n'
+
+      - name: Create or reuse bot-authored promotion issue
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          issues="$(gh api "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100")"
+          matches="$(jq --arg title "$ISSUE_TITLE" '[.[] | select(.pull_request == null and .title == $title)]' <<<"$issues")"
+          count="$(jq 'length' <<<"$matches")"
+          if [[ "$count" == 1 ]]; then
+            jq -r '.[0] | "PROMOTION_ISSUE_NUMBER=\(.number)\nPROMOTION_ISSUE_URL=\(.html_url)"' <<<"$matches" | tee -a "$GITHUB_ENV"
+            printf 'BOT_PROMOTION_ISSUE_REUSED=YES\n'
+            exit 0
+          fi
+          test "$count" = 0
+          printf -v body '%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n' \
+            'This issue was created by `github-actions[bot]` after verifying one exact immutable promotion commit.' \
+            "- target base: \`main@$BASE_SHA\`" \
+            "- signed staging source: \`$SOURCE_SHA\`" \
+            "- exact tree: \`$SOURCE_TREE\`" \
+            "- bot branch: \`$PROMOTION_BRANCH\`" \
+            "- bot head: \`$PROMOTION_HEAD\`" \
+            'Convert this exact issue to a pull request with the listed branch and base. The repository owner must review and approve the fixed bot-authored head. No runtime deployment or external effect is authorized.'
+          response="$(gh api --method POST "repos/$GITHUB_REPOSITORY/issues" -f title="$ISSUE_TITLE" -f body="$body")"
+          jq -r '"PROMOTION_ISSUE_NUMBER=\(.number)\nPROMOTION_ISSUE_URL=\(.html_url)"' <<<"$response" | tee -a "$GITHUB_ENV"
+          printf 'BOT_PROMOTION_ISSUE_CREATED=PASS\n'
+
+      - name: Publish issue conversion authority
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$PROMOTION_ISSUE_NUMBER"
+          {
+            printf '# Bot-authored promotion issue\n\n'
+            printf -- '- Issue: `%s`\n' "$PROMOTION_ISSUE_NUMBER"
+            printf -- '- Promotion branch: `%s`\n' "$PROMOTION_BRANCH"
+            printf -- '- Promotion head: `%s`\n' "$PROMOTION_HEAD"
+            printf -- '- Exact tree: `%s`\n' "$SOURCE_TREE"
+          } >> "$GITHUB_STEP_SUMMARY"
