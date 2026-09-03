@@ -53,12 +53,16 @@ def metrics_payload() -> bytes:
     rows: list[str] = []
     for family in sorted(collector.EXPECTED_METRIC_FAMILIES):
         rows.extend((f"# HELP {family} test", f"# TYPE {family} gauge"))
-    rows.append(
-        'intake_inbox_backlog{codestra_business="platform",application="integration",service="middleware-api",environment="staging"} 0'
-    )
-    rows.append(
-        f'codestra_release_info{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"}} 1'
-    )
+        if family == "codestra_release_info":
+            rows.append(
+                f'{family}{{service="middleware-api",component="api",environment="staging",release_sha="{SOURCE}",image_digest="{DIGEST}",schema_or_migration_head="0003_immutable_event_ledger",version="0.1.0"}} 1'
+            )
+        elif family.startswith(("lead_", "survey_", "intake_")):
+            rows.append(
+                f'{family}{{codestra_business="platform",application="integration",service="middleware-api",environment="staging"}} 0'
+            )
+        else:
+            rows.append(f"{family} 0")
     return ("\n".join(rows) + "\n").encode()
 
 
