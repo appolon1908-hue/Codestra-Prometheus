@@ -156,3 +156,47 @@ groups:
           summary: "Webhook retries elevated for provider {{ $labels.provider }}"
           description: "Webhook retry rate exceeds 0.1/s for {{ $labels.codestra_business }}/{{ $labels.service }}."
           runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/docs/RUNBOOKS.md#slo-slow-burn"
+
+  - name: codestra-operations-dashboard-api
+    rules:
+      - alert: CodestraOperationsDashboardApiErrors
+        expr: (codestra:operations_dashboard_error_ratio:5m > 0.05) and on (codestra_business, environment, region, deployment, server, application, service, operation) (codestra:operations_dashboard_requests:rate5m > 0.05)
+        for: 10m
+        labels:
+          severity: critical
+          owner: codestra-platform
+          codestra_business: "{{ $labels.codestra_business }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
+        annotations:
+          summary: "Operations dashboard API errors are high for {{ $labels.service }}"
+          description: "The read-only operations dashboard endpoint {{ $labels.operation }} has a 5xx ratio above 5%."
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/docs/RUNBOOKS.md#operations-dashboard-api"
+
+      - alert: CodestraOperationsDashboardApiLatencyHigh
+        expr: codestra:operations_dashboard_duration_seconds:p95_5m > 2
+        for: 10m
+        labels:
+          severity: warning
+          owner: codestra-platform
+          codestra_business: "{{ $labels.codestra_business }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
+        annotations:
+          summary: "Operations dashboard API latency is high for {{ $labels.service }}"
+          description: "The read-only operations dashboard endpoint {{ $labels.operation }} has p95 latency above two seconds."
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/docs/RUNBOOKS.md#operations-dashboard-api"
+
+      - alert: CodestraOperationsDashboardAuthFailures
+        expr: codestra:operations_dashboard_auth_failures:rate5m > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          owner: codestra-security
+          codestra_business: "{{ $labels.codestra_business }}"
+          service: "{{ $labels.service }}"
+          environment: "{{ $labels.environment }}"
+        annotations:
+          summary: "Operations dashboard auth failures detected for {{ $labels.service }}"
+          description: "Read-only dashboard authentication failures are above threshold; verify monitoring-readonly token scope and gateway enforcement."
+          runbook_url: "https://github.com/appolon1908-hue/Codestra-Prometheus/blob/main/codestra/docs/RUNBOOKS.md#operations-dashboard-api"

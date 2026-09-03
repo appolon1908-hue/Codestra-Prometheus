@@ -65,6 +65,24 @@ groups:
       - record: codestra:external_provider_failures:rate5m
         expr: sum by (codestra_business, environment, region, deployment, application, service, provider, reason) (rate(codestra_external_provider_failures_total[5m]))
 
+  - name: codestra-operations-dashboard-recording
+    interval: 30s
+    rules:
+      - record: codestra:operations_dashboard_requests:rate5m
+        expr: sum by (codestra_business, environment, region, deployment, server, application, service, operation) (rate(codestra_http_requests_total{operation=~"/v1/operations-dashboard/.*"}[5m]))
+      - record: codestra:operations_dashboard_5xx:rate5m
+        expr: sum by (codestra_business, environment, region, deployment, server, application, service, operation) (rate(codestra_http_requests_total{operation=~"/v1/operations-dashboard/.*",status=~"5.."}[5m]))
+      - record: codestra:operations_dashboard_error_ratio:5m
+        expr: codestra:operations_dashboard_5xx:rate5m / clamp_min(codestra:operations_dashboard_requests:rate5m, 0.001)
+      - record: codestra:operations_dashboard_duration_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (le, codestra_business, environment, region, deployment, server, application, service, operation) (rate(codestra_http_request_duration_seconds_bucket{operation=~"/v1/operations-dashboard/.*"}[5m])))
+      - record: codestra:operations_dashboard_auth_failures:rate5m
+        expr: sum by (codestra_business, environment, region, deployment, server, application, service, reason) (rate(codestra_operations_dashboard_auth_failures_total[5m]))
+      - record: codestra:operations_dashboard_release_gate_state:max
+        expr: max by (codestra_business, environment, region, deployment, server, application, service, gate, state) (codestra_operations_dashboard_release_gate_state)
+      - record: codestra:operations_dashboard_canary_state:max
+        expr: max by (codestra_business, environment, region, deployment, server, application, service, provider, channel, state) (codestra_operations_dashboard_canary_state)
+
   - name: codestra-platform-recording
     interval: 30s
     rules:
