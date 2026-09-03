@@ -68,8 +68,6 @@ UniqueKeyLoader.add_constructor(
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Build one JSON object while rejecting duplicate security-sensitive keys."""
-
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
@@ -192,11 +190,37 @@ def service_network_aliases(
     if isinstance(networks, list):
         if not all(isinstance(item, str) for item in networks):
             fail(f"Compose {service_name} networks are invalid")
-        return set() if network in networks else set()
+        return set()
     if networks is None:
         return set()
     fail(f"Compose {service_name} networks are invalid")
     return set()
+
+
+def normalize_dns_name(value: object) -> str:
+    return value.rstrip(".").lower() if isinstance(value, str) else ""
+
+
+def mount_target(entry: object, collection: str) -> str | None:
+    if isinstance(entry, dict):
+        value = entry.get("target")
+        return value if isinstance(value, str) else None
+    if not isinstance(entry, str):
+        fail(f"Prometheus {collection} contains an invalid mount entry")
+    if collection == "volumes":
+        pieces = entry.split(":")
+        return pieces[1] if len(pieces) >= 2 else None
+    return None
+
+
+def shadows_resolution_file(target: str | None) -> bool:
+    return target in {
+        "/",
+        "/etc",
+        "/etc/hosts",
+        "/etc/resolv.conf",
+        "/etc/nsswitch.conf",
+    }
 
 
 def validate_private_postgres_resolution(
@@ -213,6 +237,7 @@ def validate_private_postgres_resolution(
         "dns_opt",
         "dns_search",
         "network_mode",
+        "extends",
     ):
         if field in prometheus_service:
             fail(
@@ -220,23 +245,32 @@ def validate_private_postgres_resolution(
                 f"resolution through {field}"
             )
 
-    sensitive_mounts = {"/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf"}
-    for volume in prometheus_service.get("volumes", []):
-        target: str | None = None
-        if isinstance(volume, str):
-            pieces = volume.split(":")
-            if len(pieces) >= 2:
-                target = pieces[1]
-        elif isinstance(volume, dict):
-            value = volume.get("target")
-            target = value if isinstance(value, str) else None
-        if target in sensitive_mounts:
-            fail(
-                "Prometheus may not replace system name-resolution files: "
-                f"{target}"
-            )
+    for collection in ("volumes", "configs", "secrets"):
+        entries = prometheus_service.get(collection, [])
+        if not isinstance(entries, list):
+            fail(f"Prometheus {collection} must be a list")
+        for entry in entries:
+            target = mount_target(entry, collection)
+            if shadows_resolution_file(target):
+                fail(
+                    "Prometheus may not replace system name-resolution files "
+                    f"through {collection}: {target}"
+                )
+
+    tmpfs = prometheus_service.get("tmpfs", [])
+    if isinstance(tmpfs, str):
+        tmpfs_entries = [tmpfs]
+    elif isinstance(tmpfs, list) and all(isinstance(item, str) for item in tmpfs):
+        tmpfs_entries = tmpfs
+    else:
+        fail("Prometheus tmpfs must be a string or list of strings")
+    for entry in tmpfs_entries:
+        target = entry.split(":", 1)[0]
+        if shadows_resolution_file(target):
+            fail(f"Prometheus tmpfs may not shadow name resolution: {target}")
 
     owners: set[str] = set()
+    private_name = normalize_dns_name(PRIVATE_POSTGRES_HOST)
     for service_name, service in services.items():
         networks = service.get("networks")
         joined = False
@@ -249,12 +283,19 @@ def validate_private_postgres_resolution(
         if not joined:
             continue
 
-        aliases = service_network_aliases(service, service_name, "observability")
+        aliases = {
+            normalize_dns_name(alias)
+            for alias in service_network_aliases(
+                service,
+                service_name,
+                "observability",
+            )
+        }
         claims_private_name = (
-            service_name == PRIVATE_POSTGRES_HOST
-            or PRIVATE_POSTGRES_HOST in aliases
-            or service.get("container_name") == PRIVATE_POSTGRES_HOST
-            or service.get("hostname") == PRIVATE_POSTGRES_HOST
+            normalize_dns_name(service_name) == private_name
+            or private_name in aliases
+            or normalize_dns_name(service.get("container_name")) == private_name
+            or normalize_dns_name(service.get("hostname")) == private_name
         )
         if claims_private_name:
             owners.add(service_name)
