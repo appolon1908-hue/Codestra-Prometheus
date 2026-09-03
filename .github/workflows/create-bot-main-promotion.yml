@@ -1,0 +1,134 @@
+name: Create bot-authored exact-tree main promotion
+
+on:
+  push:
+    branches:
+      - automation/create-bot-main-promotion-20260903
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: create-prometheus-bot-main-promotion
+  cancel-in-progress: false
+
+env:
+  BASE_REF: main
+  BASE_SHA: 12b79875cf01033d1a5bd29462fc70bed0e4bbfb
+  SOURCE_SHA: 660b976e01caa64667bc63953f32187df26d4e75
+  SOURCE_TREE: ade8a3c224e6fc7679ba833c5a9370554636ea60
+  PROMOTION_BRANCH: bot/promote-exact-staging-tree-main-20260903
+
+jobs:
+  create:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out full repository history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify source and create exact-tree bot commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin "$BASE_REF" "$SOURCE_SHA"
+          test "$(git rev-parse "origin/$BASE_REF")" = "$BASE_SHA"
+          test "$(git show -s --format=%T "$SOURCE_SHA")" = "$SOURCE_TREE"
+          test "$(git show -s --format=%G? "$SOURCE_SHA")" = G
+
+          if git ls-remote --exit-code --heads origin "$PROMOTION_BRANCH" >/dev/null 2>&1; then
+            printf 'PROMOTION_BRANCH_ALREADY_EXISTS=YES\n'
+            remote_sha="$(git ls-remote --heads origin "$PROMOTION_BRANCH" | awk '{print $1}')"
+            git fetch --no-tags origin "$remote_sha"
+            test "$(git show -s --format=%T "$remote_sha")" = "$SOURCE_TREE"
+            test "$(git show -s --format=%P "$remote_sha")" = "$BASE_SHA"
+            printf 'PROMOTION_HEAD=%s\n' "$remote_sha" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          git checkout --detach "$BASE_SHA"
+          git switch --create "$PROMOTION_BRANCH"
+          git read-tree --reset -u "$SOURCE_TREE"
+          test "$(git write-tree)" = "$SOURCE_TREE"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit --no-gpg-sign -m "promote: publish exact signed staging tree to main" -m "Materialize signed staging source $SOURCE_SHA and exact tree $SOURCE_TREE on canonical main $BASE_SHA. Source promotion only; no runtime deployment or external effect."
+          promotion_head="$(git rev-parse HEAD)"
+          test "$(git show -s --format=%T HEAD)" = "$SOURCE_TREE"
+          test "$(git show -s --format=%P HEAD)" = "$BASE_SHA"
+
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+            push --set-upstream "https://github.com/$GITHUB_REPOSITORY.git" \
+            "HEAD:refs/heads/$PROMOTION_BRANCH"
+          printf 'PROMOTION_HEAD=%s\n' "$promotion_head" >> "$GITHUB_ENV"
+          printf 'PROMOTION_COMMIT_CREATED=PASS\n'
+
+      - name: Open bot-authored exact-tree pull request
+        id: open
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=${GITHUB_REPOSITORY_OWNER}:${PROMOTION_BRANCH}&base=${BASE_REF}&per_page=10")"
+          count="$(jq 'length' <<<"$existing")"
+          if [[ "$count" == 1 ]]; then
+            jq -r '.[0] | "PULL_REQUEST_NUMBER=\(.number)\nPULL_REQUEST_URL=\(.html_url)"' <<<"$existing" | tee -a "$GITHUB_ENV"
+            printf 'PULL_REQUEST_REUSED=YES\n'
+            exit 0
+          fi
+          test "$count" = 0
+
+          body="$(cat <<EOF
+Publishes the exact signed staging tree to canonical \`main\` from a GitHub Actions-authored promotion commit.
+
+- base: \`main@$BASE_SHA\`
+- signed staging source: \`$SOURCE_SHA\`
+- exact tree: \`$SOURCE_TREE\`
+- promotion head: \`$PROMOTION_HEAD\`
+
+The branch was created by \`github-actions[bot]\` only after verifying the signed staging commit, exact tree, and one-commit ancestry. The repository owner must independently approve this fixed head. Source promotion only; no runtime deployment, reload, target activation, networking, secrets, or external effects.
+EOF
+)"
+
+          response_file="$(mktemp)"
+          error_file="$(mktemp)"
+          set +e
+          gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" \
+            -f title='promote: publish exact signed Prometheus staging tree to main' \
+            -f head="$PROMOTION_BRANCH" \
+            -f base="$BASE_REF" \
+            -F draft=false \
+            -f body="$body" >"$response_file" 2>"$error_file"
+          rc=$?
+          set -e
+          if [[ "$rc" -ne 0 ]]; then
+            printf 'GITHUB_PR_CREATE_FAILED=YES\n' >&2
+            sed -E 's/(token|authorization|secret)[^[:space:]]*/[REDACTED]/Ig' "$error_file" >&2
+            cat "$response_file" | jq -c '{message,errors,documentation_url,status}' >&2 || true
+            exit "$rc"
+          fi
+          jq -r '"PULL_REQUEST_NUMBER=\(.number)\nPULL_REQUEST_URL=\(.html_url)"' "$response_file" | tee -a "$GITHUB_ENV"
+          printf 'BOT_AUTHORED_PULL_REQUEST=PASS\n'
+
+      - name: Publish immutable authority summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$PROMOTION_HEAD"
+          test -n "$PULL_REQUEST_NUMBER"
+          {
+            printf '# Bot-authored exact-tree promotion\n\n'
+            printf -- '- Pull request: `%s`\n' "$PULL_REQUEST_NUMBER"
+            printf -- '- Base SHA: `%s`\n' "$BASE_SHA"
+            printf -- '- Source SHA: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Tree SHA: `%s`\n' "$SOURCE_TREE"
+            printf -- '- Promotion head: `%s`\n' "$PROMOTION_HEAD"
+            printf -- '- Author/pusher: `github-actions[bot]`\n'
+            printf -- '- Required reviewer: repository owner or another non-bot collaborator\n'
+          } >> "$GITHUB_STEP_SUMMARY"
